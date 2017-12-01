@@ -84,8 +84,17 @@ for w, i in word_index.items():
     embeddings[w][i] = 1.0
 zero = np.zeros(vocab_size, dtype=np.float32)
 
+print('vocabulary=%d' % len(vocabulary))
+v_in, v_out = [], []
+for w in words:
+    if w in vocabulary:
+        v_in.append(w)
+    else:
+        v_out.append(w)
+print(' in vocabulary', len(v_in), len(set(v_in)))
+print('out vocabulary', len(v_out), len(set(v_out)))
 
-def data_getter(n_input):
+def _data_getter(n_input):
     source = cycle(words)
     batch = []
     for _ in range(n_input):
@@ -105,6 +114,28 @@ def data_getter(n_input):
 
         yield x, y, w_x, w_y
         batch = batch[1:] + [i]
+
+
+def data_getter(n_input):
+    while True:
+        i = random.randint(0, len(words) - n_input - 1)
+        phrase = words[i:i + n_input + 1]
+        words_x = [word_index.get(phrase[j], -1) for j in range(n_input)]
+        word_y = word_index.get(phrase[n_input], -1)
+
+        oneh_x = np.empty((n_input, vocab_size), dtype=np.float32)
+        for j in range(n_input):
+            oneh_x[j] = embeddings.get(phrase[j], zero)
+        oneh_y = embeddings.get(phrase[n_input], zero)
+        w_x = np.array(words_x)
+        w_x = np.reshape(w_x, [-1, 1])
+        w_y = np.array(word_y)
+
+        is_zero = word_y not in embeddings
+
+        # print('**', phrase, words_x, word_y, is_zero)
+
+        yield oneh_x, oneh_y, w_x, w_y
 
 
 def batch_getter(n_input, batch_size):
@@ -198,6 +229,8 @@ with tf.Session() as session:
         # Generate a minibatch. Add some randomness on selection process.
         batch_x, batch_y, words_x, words_y = next(source)
         xx, yy = words_x[0], batch_y[0]
+        # print(step, xx, yy)
+        # assert step < 5
         # assert isinstance(xx[0], int), (xx[0], type(xx[0]))
         # show('words_x', words_x)
 
