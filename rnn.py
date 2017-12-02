@@ -30,13 +30,14 @@ writer = tf.summary.FileWriter(logs_path)
 start_time = time.time()
 
 
-def elapsed(sec):
+def elapsed():
+    sec = time.time() - start_time
     if sec < 60:
-        return str(sec) + " sec"
+        return "%.2f sec" % sec
     elif sec < 60 * 60:
-        return str(sec / 60) + " min"
+        return "%.2f min" % (sec / 60.0)
     else:
-        return str(sec / (60 * 60)) + " hr"
+        return "%.2f hour" % (sec / (60 * 60))
 
 
 def show(name, x):
@@ -131,10 +132,10 @@ def data_getter(n_input):
         wy = word_index.get(phrase[n_input], unk_index)
 
         oneh_y = embeddings.get(phrase[n_input], unk_embedding)
-        words_x = np.array(wx)
-        words_x = np.reshape(words_x, [-1, 1])
-        words_y = np.array(wy)
-        yield oneh_y, words_x, words_y
+        indexes_x = np.array(wx)
+        indexes_x = np.reshape(indexes_x, [-1, 1])
+        indexes_y = np.array(wy)
+        yield oneh_y, indexes_x, indexes_y
 
 
 def batch_getter(n_input, batch_size):
@@ -144,15 +145,15 @@ def batch_getter(n_input, batch_size):
     source = data_getter(n_input)
     while True:
         oneh_y = np.empty((batch_size, vocab_size), dtype=np.float32)
-        words_x = np.empty((batch_size, n_input, 1), dtype=int)
-        words_y = np.empty((batch_size), dtype=int)
+        indexes_x = np.empty((batch_size, n_input, 1), dtype=int)
+        indexes_y = np.empty((batch_size), dtype=int)
         for i in range(batch_size):
             oh_y, w_x, w_y = next(source)
             oneh_y[i] = oh_y
-            words_x[i] = w_x
-            words_y[i] = w_y
-        words_x = np.reshape(words_x, [-1, n_input, 1])
-        yield oneh_y, words_x, words_y
+            indexes_x[i] = w_x
+            indexes_y[i] = w_y
+        # indexes_x = np.reshape(indexes_x, [-1, n_input, 1])
+        yield oneh_y, indexes_x, indexes_y
 
 
 # tf Graph input
@@ -186,8 +187,7 @@ def RNN(x, weights, biases):
     # generate prediction
     outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
 
-    # there are n_input outputs but
-    # we only want the last output
+    # there are n_input outputs but we only want the last output
     return tf.matmul(outputs[-1], weights['out']) + biases['out']
 
 
@@ -218,12 +218,12 @@ with tf.Session() as session:
     writer.add_graph(session.graph)
 
     for step in range(training_iters):
-        # Generate a minibatch. Add some randomness on selection process.
-        batch_y, words_x, words_y = next(source)
+        # Generate a minibatch.
+        onehot_y, indexes_x, indexes_y = next(source)
 
         _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
-                                                feed_dict={x: words_x,
-                                                           y: batch_y})
+                                                feed_dict={x: indexes_x,
+                                                           y: onehot_y})
         loss_total += loss
         acc_total += acc
         if (step + 1) % display_step == 0:
@@ -231,15 +231,15 @@ with tf.Session() as session:
                   (step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
             acc_total = 0
             loss_total = 0
-            indexes = [int(words_x[0, i, 0]) for i in range(words_x.shape[1])]
+            indexes = [int(indexes_x[0, i, 0]) for i in range(indexes_x.shape[1])]
             symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
-            symbols_out = index_word.get(words_y[0], UNKNOWN)
+            symbols_out = index_word.get(indexes_y[0], UNKNOWN)
             v = tf.argmax(onehot_pred, 1).eval()
             symbols_out_pred = index_word[int(v[0])]
             print("%s -> [%s] predicted [%s]" % (symbols_in,symbols_out, symbols_out_pred))
 
     print("Optimization Finished!")
-    print("Elapsed time: ", elapsed(time.time() - start_time))
+    print("Elapsed time: ", elapsed())
     print("Run on command line.")
     print("\ttensorboard --logdir=%s" % (logs_path))
     print("Point your web browser to: http://localhost:6006/")
@@ -251,14 +251,14 @@ with tf.Session() as session:
         if len(words) != n_input:
             continue
         try:
-            symbols_in_keys = [word_index.get(w, unk_index) for w in words]
+            indexes = [word_index.get(w, unk_index) for w in words]
             for i in range(32):
-                keys = np.reshape(np.array(symbols_in_keys), [-1, n_input, 1])
+                keys = np.reshape(np.array(indexes), [-1, n_input, 1])
                 onehot_pred = session.run(pred, feed_dict={x: keys})
                 onehot_pred_index = int(tf.argmax(onehot_pred, 1).eval())
                 sentence = "%s %s" % (sentence, index_word[onehot_pred_index])
-                symbols_in_keys = symbols_in_keys[1:]
-                symbols_in_keys.append(onehot_pred_index)
+                indexes = indexes[1:]
+                indexes.append(onehot_pred_index)
             print(sentence)
         except KeyError:
             print("Word not in dictionary")
