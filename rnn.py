@@ -133,7 +133,6 @@ def data_getter(n_input):
 
         oneh_y = embeddings.get(phrase[n_input], unk_embedding)
         indexes_x = np.array(wx)
-        indexes_x = np.reshape(indexes_x, [-1, 1])
         indexes_y = np.array(wy)
         yield oneh_y, indexes_x, indexes_y
 
@@ -145,19 +144,18 @@ def batch_getter(n_input, batch_size):
     source = data_getter(n_input)
     while True:
         oneh_y = np.empty((batch_size, vocab_size), dtype=np.float32)
-        indexes_x = np.empty((batch_size, n_input, 1), dtype=int)
+        indexes_x = np.empty((batch_size, n_input), dtype=int)
         indexes_y = np.empty((batch_size), dtype=int)
         for i in range(batch_size):
             oh_y, w_x, w_y = next(source)
             oneh_y[i] = oh_y
             indexes_x[i] = w_x
             indexes_y[i] = w_y
-        # indexes_x = np.reshape(indexes_x, [-1, n_input, 1])
         yield oneh_y, indexes_x, indexes_y
 
 
 # tf Graph input
-x = tf.placeholder("float", [None, n_input, 1])
+x = tf.placeholder("float", [None, n_input])
 y = tf.placeholder("float", [None, vocab_size])
 
 # RNN output node weights and biases
@@ -231,12 +229,12 @@ with tf.Session() as session:
                   (step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
             acc_total = 0
             loss_total = 0
-            indexes = [int(indexes_x[0, i, 0]) for i in range(indexes_x.shape[1])]
+            indexes = [int(indexes_x[0, i]) for i in range(indexes_x.shape[1])]
             symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
             symbols_out = index_word.get(indexes_y[0], UNKNOWN)
             v = tf.argmax(onehot_pred, 1).eval()
             symbols_out_pred = index_word[int(v[0])]
-            print("%s -> [%s] predicted [%s]" % (symbols_in,symbols_out, symbols_out_pred))
+            print("%s -> [%s] predicted [%s]" % (symbols_in, symbols_out, symbols_out_pred))
 
     print("Optimization Finished!")
     print("Elapsed time: ", elapsed())
@@ -253,7 +251,7 @@ with tf.Session() as session:
         try:
             indexes = [word_index.get(w, unk_index) for w in words]
             for i in range(32):
-                keys = np.reshape(np.array(indexes), [-1, n_input, 1])
+                keys = np.reshape(np.array(indexes), [-1, n_input])
                 onehot_pred = session.run(pred, feed_dict={x: keys})
                 onehot_pred_index = int(tf.argmax(onehot_pred, 1).eval())
                 sentence = "%s %s" % (sentence, index_word[onehot_pred_index])
