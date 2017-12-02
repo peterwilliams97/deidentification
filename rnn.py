@@ -4,23 +4,24 @@ from tensorflow.contrib import rnn
 from os.path import expanduser
 from glob import glob
 import re
-from itertools import cycle
 import random
 import time
 
 
 # Parameters
 MAX_VOCAB = 40000
-SMALL_TEXT = False
+SMALL_TEXT = True
 learning_rate = 0.001
-training_iters = 50000
+training_iters = 2000
 display_step = 1000
 n_input = 3
 batch_size = 100
+train_frac = .1
 
 # number of units in RNN cell
 n_hidden = 512
 
+UNKNOWN = '<UNKNOWN>'
 
 # Target log path
 logs_path = '/tmp/tensorflow/rnn_words'
@@ -66,33 +67,36 @@ def make_text():
 RE_SPACE = re.compile(r'[\s,\.:;!\?\-\(\)]+', re.DOTALL | re.MULTILINE)
 RE_NUMBER = re.compile(r'[^A-Z^a-z]')
 
-train_frac = .1
+
 text = make_text()
 print('%d bytes' % len(text))
-words = RE_SPACE.split(text)
-words = [w for w in words if len(w) > 1 and not RE_NUMBER.search(w)]
-n = int(len(words) * (1.0 - train_frac))
-# train = words[:n]
-# test = words[n:]
-# words = train
-print('%d words n=%d' % (len(words), n))
-print(' '.join(words[:100]))
-vocabulary = sorted(set(words), key=lambda x: (len(x), x))
+all_words = RE_SPACE.split(text)
+all_words = [w for w in all_words if len(w) > 1 and not RE_NUMBER.search(w)]
+n = int(len(all_words) * (1.0 - train_frac))
+# train = all_words[:n]
+# test = all_words[n:]
+# all_words = train
+print('%d all_words n=%d' % (len(all_words), n))
+print(' '.join(all_words[:100]))
+vocabulary = sorted(set(all_words), key=lambda x: (len(x), x))
 print('vocabulary=%d' % len(vocabulary))
 print(vocabulary[:20])
 word_counts = {w: 0 for w in vocabulary}
-for w in words:
+for w in all_words:
     word_counts[w] += 1
 vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:MAX_VOCAB]
-vocabulary_list[-1] = '<UNKNOWN>'
+vocabulary_list[-1] = UNKNOWN
 vocabulary = set(vocabulary_list)
-for i, w in enumerate(words[:5]):
+for i, w in enumerate(all_words[:5]):
     marker = '***' if w in vocabulary else ''
     print('%3d: %-20s %s' % (i, w, marker))
 
 vocab_size = len(vocabulary)
+unk_index = vocab_size - 1
 word_index = {w: i for i, w in enumerate(vocabulary_list)}
+word_index[UNKNOWN] = unk_index
 index_word = {i: w for w, i in word_index.items()}
+
 
 for i in sorted(index_word)[:5]:
     print(i, index_word[i], type(i))
@@ -103,12 +107,11 @@ for i in range(vocab_size):
 embeddings = {w: np.zeros(vocab_size, dtype=np.float32) for w in vocabulary}
 for w, i in word_index.items():
     embeddings[w][i] = 1.0
-zero = embeddings['<UNKNOWN>']
-# np.zeros(vocab_size, dtype=np.float32)
+unk_embedding = embeddings[UNKNOWN]
 
 print('vocabulary=%d' % len(vocabulary))
 v_in, v_out = [], []
-for w in words:
+for w in all_words:
     if w in vocabulary:
         v_in.append(w)
     else:
@@ -116,66 +119,40 @@ for w in words:
 print(' in vocabulary', len(v_in), len(set(v_in)))
 print('out vocabulary', len(v_out), len(set(v_out)))
 
-def _data_getter(n_input):
-    source = cycle(words)
-    batch = []
-    for _ in range(n_input):
-        w = next(source)
-        i = word_index.get(w, -1)
-        batch.append(i)
-    while True:
-        x = np.empty((n_input, vocab_size), dtype=np.float32)
-        for i in range(n_input):
-            x[i] = embeddings.get(batch[i], zero)
-        w = next(source)
-        i = word_index.get(w, -1)
-        y = embeddings.get(w, zero)
-        w_x = np.array(batch)
-        w_x = np.reshape(w_x, [-1, 1])
-        w_y = np.array(i)
-
-        yield x, y, w_x, w_y
-        batch = batch[1:] + [i]
-
 
 def data_getter(n_input):
+    """Generator that returns  x, y
+        Adds some randomness on selection process.
+    """
     while True:
-        i = random.randint(0, len(words) - n_input - 1)
-        phrase = words[i:i + n_input + 1]
-        words_x = [word_index.get(phrase[j], -1) for j in range(n_input)]
-        words_y = word_index.get(phrase[n_input], -1)
+        i = random.randint(0, len(all_words) - n_input - 1)
+        phrase = all_words[i:i + n_input + 1]
+        wx = [word_index.get(phrase[j], unk_index) for j in range(n_input)]
+        wy = word_index.get(phrase[n_input], unk_index)
 
-        # oneh_x = np.empty((n_input, vocab_size), dtype=np.float32)
-        # for j in range(n_input):
-        #     oneh_x[j] = embeddings.get(phrase[j], zero)
-        oneh_y = embeddings.get(phrase[n_input], zero)
-        w_x = np.array(words_x)
-        w_x = np.reshape(w_x, [-1, 1])
-        w_y = np.array(words_y)
-
-        # is_zero = word_y not in embeddings
-        # print('**', phrase, words_x, word_y, is_zero)
-
-        yield oneh_y, w_x, w_y
+        oneh_y = embeddings.get(phrase[n_input], unk_embedding)
+        words_x = np.array(wx)
+        words_x = np.reshape(words_x, [-1, 1])
+        words_y = np.array(wy)
+        yield oneh_y, words_x, words_y
 
 
 def batch_getter(n_input, batch_size):
+    """Generator that returns batches of x, y
+        Adds some randomness on selection process.
+    """
     source = data_getter(n_input)
     while True:
-        # xx = np.empty((batch_size, n_input, vocab_size), dtype=np.float32)
-        yy = np.empty((batch_size, vocab_size), dtype=np.float32)
-        wxx = np.empty((batch_size, n_input, 1), dtype=int)
-        wyy = np.empty((batch_size), dtype=int)
+        oneh_y = np.empty((batch_size, vocab_size), dtype=np.float32)
+        words_x = np.empty((batch_size, n_input, 1), dtype=int)
+        words_y = np.empty((batch_size), dtype=int)
         for i in range(batch_size):
-            y, wx, wy = next(source)
-            yy[i] = y
-            wxx[i] = wx
-            wyy[i] = wy
-            # wxx.append(wx)
-            # wyy.append(wy)
-        # xx = np.reshape(xx, [-1, n_input, vocab_size, 1])
-        wxx = np.reshape(wxx, [-1, n_input, 1])
-        yield yy, wxx, wyy
+            oh_y, w_x, w_y = next(source)
+            oneh_y[i] = oh_y
+            words_x[i] = w_x
+            words_y[i] = w_y
+        words_x = np.reshape(words_x, [-1, n_input, 1])
+        yield oneh_y, words_x, words_y
 
 
 # tf Graph input
@@ -243,13 +220,6 @@ with tf.Session() as session:
     for step in range(training_iters):
         # Generate a minibatch. Add some randomness on selection process.
         batch_y, words_x, words_y = next(source)
-        # xx, yy = words_x, batch_y
-        # print(step)
-        # show('batch_x', batch_x)
-        # show('batch_y', batch_y)
-        # show('words_x', words_x)
-        # show('words_y', words_y)
-        # assert step < 5
 
         _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
                                                 feed_dict={x: words_x,
@@ -261,17 +231,10 @@ with tf.Session() as session:
                   (step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
             acc_total = 0
             loss_total = 0
-            # show('words_x', words_x)
-            # print(words_x)
             indexes = [int(words_x[0, i, 0]) for i in range(words_x.shape[1])]
-            # print(indexes, type(indexes[0]))
-            symbols_in = [index_word.get(i, '<UNKNOWN>') for i in indexes]
-            # show('words_y', words_y)
-            # print(words_y)
-            symbols_out = index_word.get(words_y[0], '<UNKNOWN>')
+            symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
+            symbols_out = index_word.get(words_y[0], UNKNOWN)
             v = tf.argmax(onehot_pred, 1).eval()
-            # show('v', v)
-            # print(v)
             symbols_out_pred = index_word[int(v[0])]
             print("%s -> [%s] predicted [%s]" % (symbols_in,symbols_out, symbols_out_pred))
 
@@ -288,14 +251,14 @@ with tf.Session() as session:
         if len(words) != n_input:
             continue
         try:
-            symbols_in_keys = [dictionary[str(words[i])] for i in range(len(words))]
+            symbols_in_keys = [word_index.get(w, unk_index) for w in words]
             for i in range(32):
                 keys = np.reshape(np.array(symbols_in_keys), [-1, n_input, 1])
                 onehot_pred = session.run(pred, feed_dict={x: keys})
                 onehot_pred_index = int(tf.argmax(onehot_pred, 1).eval())
-                sentence = "%s %s" % (sentence,reverse_dictionary[onehot_pred_index])
+                sentence = "%s %s" % (sentence, index_word[onehot_pred_index])
                 symbols_in_keys = symbols_in_keys[1:]
                 symbols_in_keys.append(onehot_pred_index)
             print(sentence)
-        except:
+        except KeyError:
             print("Word not in dictionary")
