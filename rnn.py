@@ -6,17 +6,20 @@ from glob import glob
 import re
 import random
 import time
+import os
 
 
 # Parameters
 MAX_VOCAB = 40000
 SMALL_TEXT = True
 learning_rate = 0.001
-training_iters = 2000
+training_iters = 200000
 display_step = 1000
 n_input = 3
 batch_size = 100
 train_frac = .1
+patience = 5
+model_folder = 'models'
 
 # number of units in RNN cell
 n_hidden = 512
@@ -59,7 +62,7 @@ def read_text(path):
 def make_text():
     if SMALL_TEXT:
         return read_text('belling_the_cat.txt')
-    mask = expanduser('~/testdata.clean/deploy/*.txt')
+    mask = expanduser('~/testdata.clean/deploy/PDF32000_2008.txt')
     file_list = sorted(glob(mask))
     print('%d files' % len(file_list))
     return '\n'.join(read_text(path) for path in file_list)
@@ -69,61 +72,60 @@ RE_SPACE = re.compile(r'[\s,\.:;!\?\-\(\)]+', re.DOTALL | re.MULTILINE)
 RE_NUMBER = re.compile(r'[^A-Z^a-z]')
 
 
+def tokenize(text):
+    words = RE_SPACE.split(text)
+    words = [w for w in words if len(w) > 1 and not RE_NUMBER.search(w)]
+    return words
+
+
+def build_indexes(all_words, MAX_VOCAB):
+    word_counts = {w: 0 for w in set(all_words)}
+    for w in all_words:
+        word_counts[w] += 1
+    vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:MAX_VOCAB - 1]
+    vocabulary_list.append(UNKNOWN)
+    vocabulary = set(vocabulary_list)
+    for i, w in enumerate(all_words[:5]):
+        marker = '***' if w in vocabulary else ''
+        print('%3d: %-20s %s' % (i, w, marker))
+
+    vocab_size = len(vocabulary)
+    unk_index = vocab_size - 1
+    word_index = {w: i for i, w in enumerate(vocabulary_list)}
+    word_index[UNKNOWN] = unk_index
+    index_word = {i: w for w, i in word_index.items()}
+
+    for i in sorted(index_word)[:5]:
+        print(i, index_word[i], type(i))
+
+    for i in range(vocab_size):
+        assert i in index_word, i
+
+    return word_index, index_word, unk_index
+
+
+def build_embeddings(word_index):
+    embeddings = {w: np.zeros(len(word_index), dtype=np.float32) for w in word_index}
+    for w, i in word_index.items():
+        embeddings[w][i] = 1.0
+    unk_embedding = embeddings[UNKNOWN]
+    return embeddings, unk_embedding
+
+
 text = make_text()
 print('%d bytes' % len(text))
-all_words = RE_SPACE.split(text)
-all_words = [w for w in all_words if len(w) > 1 and not RE_NUMBER.search(w)]
-n = int(len(all_words) * (1.0 - train_frac))
-# train = all_words[:n]
-# test = all_words[n:]
-# all_words = train
-print('%d all_words n=%d' % (len(all_words), n))
-print(' '.join(all_words[:100]))
-vocabulary = sorted(set(all_words), key=lambda x: (len(x), x))
-print('vocabulary=%d' % len(vocabulary))
-print(vocabulary[:20])
-word_counts = {w: 0 for w in vocabulary}
-for w in all_words:
-    word_counts[w] += 1
-vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:MAX_VOCAB]
-vocabulary_list[-1] = UNKNOWN
-vocabulary = set(vocabulary_list)
-for i, w in enumerate(all_words[:5]):
-    marker = '***' if w in vocabulary else ''
-    print('%3d: %-20s %s' % (i, w, marker))
-
-vocab_size = len(vocabulary)
-unk_index = vocab_size - 1
-word_index = {w: i for i, w in enumerate(vocabulary_list)}
-word_index[UNKNOWN] = unk_index
-index_word = {i: w for w, i in word_index.items()}
-
-
-for i in sorted(index_word)[:5]:
-    print(i, index_word[i], type(i))
-
-for i in range(vocab_size):
-    assert i in index_word, i
-
-embeddings = {w: np.zeros(vocab_size, dtype=np.float32) for w in vocabulary}
-for w, i in word_index.items():
-    embeddings[w][i] = 1.0
-unk_embedding = embeddings[UNKNOWN]
-
-print('vocabulary=%d' % len(vocabulary))
-v_in, v_out = [], []
-for w in all_words:
-    if w in vocabulary:
-        v_in.append(w)
-    else:
-        v_out.append(w)
-print(' in vocabulary', len(v_in), len(set(v_in)))
-print('out vocabulary', len(v_out), len(set(v_out)))
+all_words = tokenize(text)
+word_index, index_word, unk_index = build_indexes(all_words, MAX_VOCAB)
+vocab_size = len(word_index)
+embeddings, unk_embedding = build_embeddings(word_index)
 
 
 def data_getter(n_input):
-    """Generator that returns  x, y
-        Adds some randomness on selection process.
+    """Generator that returns x, y, oneh_y
+        phrase is a random phrase of length n_input + 1 from all_words
+        x = indexes of first n_input words
+        y = index of last word
+        returns x, y, one hot encoding of y
     """
     while True:
         i = random.randint(0, len(all_words) - n_input - 1)
@@ -134,12 +136,15 @@ def data_getter(n_input):
         oneh_y = embeddings.get(phrase[n_input], unk_embedding)
         indexes_x = np.array(wx)
         indexes_y = np.array(wy)
-        yield oneh_y, indexes_x, indexes_y
+        yield indexes_x, indexes_y, oneh_y
 
 
 def batch_getter(n_input, batch_size):
-    """Generator that returns batches of x, y
-        Adds some randomness on selection process.
+    """Generator that returns x, y, oneh_y in `batch_size` batches
+        phrase is a random phrase of length n_input + 1 from all_words
+        x = indexes of first n_input words
+        y = index of last word
+        returns x, y, one hot encoding of y
     """
     source = data_getter(n_input)
     while True:
@@ -147,32 +152,33 @@ def batch_getter(n_input, batch_size):
         indexes_x = np.empty((batch_size, n_input), dtype=int)
         indexes_y = np.empty((batch_size), dtype=int)
         for i in range(batch_size):
-            oh_y, w_x, w_y = next(source)
-            oneh_y[i] = oh_y
+            w_x, w_y, oh_y = next(source)
             indexes_x[i] = w_x
             indexes_y[i] = w_y
-        yield oneh_y, indexes_x, indexes_y
+            oneh_y[i] = oh_y
+        yield indexes_x, indexes_y, oneh_y
 
 
-# tf Graph input
+# tf Graph inputs
+# x = indexes of first n_input words in phrase
+# y = one hot encoding of last word in phrase
 x = tf.placeholder("float", [None, n_input])
 y = tf.placeholder("float", [None, vocab_size])
 
 # RNN output node weights and biases
-weights = {
-    'out': tf.Variable(tf.random_normal([n_hidden, vocab_size]))
-}
-biases = {
-    'out': tf.Variable(tf.random_normal([vocab_size]))
-}
+weights = tf.Variable(tf.random_normal([n_hidden, vocab_size]))
+biases = tf.Variable(tf.random_normal([vocab_size]))
 
 
 def RNN(x, weights, biases):
-    show('x in', x)
+    """RNN predicts y (one hot) from x (indexes), weights and biases
+        y = g(x) * W + b, where
+            g = LSTM
+            x = indexes of input words
+            y = one-hot encoding of output word
 
-    # reshape to [1, n_input]
-    x = tf.reshape(x, [-1, n_input])
-    show('x reshaped', x)
+    """
+    show('x', x)
 
     # Generate a n_input-element sequence of inputs
     # (eg. [had] [a] [general] -> [20] [6] [33])
@@ -186,7 +192,9 @@ def RNN(x, weights, biases):
     outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
 
     # there are n_input outputs but we only want the last output
-    return tf.matmul(outputs[-1], weights['out']) + biases['out']
+    y = tf.matmul(outputs[-1], weights) + biases
+    show('y', y)
+    return y
 
 
 pred = RNN(x, weights, biases)
@@ -204,6 +212,9 @@ source = batch_getter(n_input, batch_size)
 # Initializing the variables
 init = tf.global_variables_initializer()
 
+os.makedirs(model_folder, exist_ok=True)
+saver = tf.train.Saver(max_to_keep=3)
+
 # Launch the graph
 with tf.Session() as session:
     session.run(init)
@@ -212,21 +223,32 @@ with tf.Session() as session:
     end_offset = n_input + 1
     acc_total = 0
     loss_total = 0
+    best_acc = 0.0
+    best_step = -1
 
     writer.add_graph(session.graph)
 
     for step in range(training_iters):
         # Generate a minibatch.
-        onehot_y, indexes_x, indexes_y = next(source)
+        indexes_x, indexes_y, onehot_y = next(source)
 
+        # Update the model
         _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
                                                 feed_dict={x: indexes_x,
                                                            y: onehot_y})
+
+        # Show some progress statistics
         loss_total += loss
         acc_total += acc
         if (step + 1) % display_step == 0:
-            print("Iter=%6d: Average Loss=%9.6f, Average Accuracy=%5.2f%%" %
-                  (step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
+            if acc_total > best_acc:
+                best_step = step
+                best_acc = acc_total
+                saver.save(session, os.path.join(model_folder, 'model_%06d.ckpt' % step))
+
+            print("Iter=%6d (best=%6d): Average Loss=%9.6f, Average Accuracy=%5.2f%%" %
+                  (step + 1, best_step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
+
             acc_total = 0
             loss_total = 0
             indexes = [int(indexes_x[0, i]) for i in range(indexes_x.shape[1])]
@@ -235,6 +257,9 @@ with tf.Session() as session:
             v = tf.argmax(onehot_pred, 1).eval()
             symbols_out_pred = index_word[int(v[0])]
             print("%s -> [%s] predicted [%s]" % (symbols_in, symbols_out, symbols_out_pred))
+
+            if step > best_step + patience * display_step:
+                break
 
     print("Optimization Finished!")
     print("Elapsed time: ", elapsed())
@@ -253,10 +278,10 @@ with tf.Session() as session:
             for i in range(32):
                 keys = np.reshape(np.array(indexes), [-1, n_input])
                 onehot_pred = session.run(pred, feed_dict={x: keys})
-                onehot_pred_index = int(tf.argmax(onehot_pred, 1).eval())
-                sentence = "%s %s" % (sentence, index_word[onehot_pred_index])
+                indexes_pred = int(tf.argmax(onehot_pred, 1).eval())
+                sentence = "%s %s" % (sentence, index_word[indexes_pred])
                 indexes = indexes[1:]
-                indexes.append(onehot_pred_index)
+                indexes.append(indexes_pred)
             print(sentence)
         except KeyError:
             print("Word not in dictionary")
