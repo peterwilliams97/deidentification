@@ -11,13 +11,13 @@ import os
 
 # Parameters
 MAX_VOCAB = 40000
-SMALL_TEXT = False
+SMALL_TEXT = True
 learning_rate = 0.001
 n_input = 3
 batch_size = 100
 train_frac = .1
 n_epochs = 10000
-patience = 10
+patience = 100
 model_folder = 'models'
 
 # number of units in RNN cell
@@ -77,14 +77,14 @@ def tokenize(text):
     return words
 
 
-def build_indexes(all_words, MAX_VOCAB):
-    word_counts = {w: 0 for w in set(all_words)}
-    for w in all_words:
+def build_indexes(words, MAX_VOCAB):
+    word_counts = {w: 0 for w in set(words)}
+    for w in words:
         word_counts[w] += 1
     vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:MAX_VOCAB - 1]
     vocabulary_list.append(UNKNOWN)
     vocabulary = set(vocabulary_list)
-    # for i, w in enumerate(all_words[:5]):
+    # for i, w in enumerate(words[:5]):
     #     marker = '***' if w in vocabulary else ''
     #     print('%3d: %-20s %s' % (i, w, marker))
 
@@ -123,9 +123,9 @@ n_samples = len(all_words) - n_input - 2
 print('%7d samples' % n_samples)
 
 
-def batch_getter(all_words, n_input, batch_size):
+def batch_getter(words, n_input, batch_size):
     """Generator that returns x, y, oneh_y in `batch_size` batches
-        phrase is a random phrase of length n_input + 1 from all_words
+        phrase is a random phrase of length n_input + 1 from words
         x = indexes of first n_input words
         y = index of last word
         returns x, y, one hot encoding of y
@@ -142,11 +142,11 @@ def batch_getter(all_words, n_input, batch_size):
 
         for j in range(n):
             i = sequence_numbers[j + k]
-            assert i < len(all_words) - n_input - 1, (i, len(all_words), n_input)
-            assert i + n_input < len(all_words), 'i=%d j=%d words=%d sequence_numbers n_input=%d' % (
-                i, j, len(all_words), len(sequence_numbers), n_input)
-            phrase_x = all_words[i:i + n_input]
-            phrase_y = all_words[i + n_input]
+            assert i < len(words) - n_input - 1, (i, len(words), n_input)
+            assert i + n_input < len(words), 'i=%d j=%d words=%d sequence_numbers n_input=%d' % (
+                i, j, len(words), len(sequence_numbers), n_input)
+            phrase_x = words[i:i + n_input]
+            phrase_y = words[i + n_input]
             wx = [word_index.get(w, unk_index) for w in phrase_x]
             wy = word_index.get(phrase_y, unk_index)
 
