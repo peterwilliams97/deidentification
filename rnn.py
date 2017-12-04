@@ -14,16 +14,16 @@ from collections import defaultdict
 # Parameters
 seed = 112
 use_spacy = True
-MAX_VOCAB = 10000
-MAX_WORDS = 10000
+MAX_VOCAB = 40000
+MAX_WORDS = 1000000
 SMALL_TEXT = False
 learning_rate = 0.001
 n_input = 3
 batch_size = 100
-train_frac = .1
+test_frac = .2
 n_epochs = 1000
-n_epochs_report = 10
-patience = 20
+n_epochs_report = 1
+patience = 100
 model_folder = 'models'
 
 # number of units in RNN cell
@@ -69,7 +69,9 @@ def read_text(path):
 def make_text():
     if SMALL_TEXT:
         return read_text('belling_the_cat.txt')
-    mask = expanduser('~/testdata.clean/deploy/PDF32000_2008.txt')
+    # mask = expanduser('~/testdata.clean/deploy/PDF32000_2008.txt')
+    mask = expanduser('~/testdata.clean/deploy/The_Block_Cipher_Companion.txt')
+
     file_list = sorted(glob(mask))
     print('%d files' % len(file_list))
     return '\n'.join(read_text(path) for path in file_list)
@@ -88,7 +90,7 @@ def tokenize_simple(text, max_words):
 
 
 spacy_nlp = spacy.load('en')
-punct = {',', '.', ';', ':', '\n', '\t', '\f'}
+punct = {',', '.', ';', ':', '\n', '\t', '\f', ''}
 
 
 def tokenize_spacy(text, n_input, max_words):
@@ -101,7 +103,7 @@ def tokenize_spacy(text, n_input, max_words):
     sentences = []
     n_words = 0
     for span in document.sents:
-        sent = [token.text for token in span]
+        sent = [token.text.strip() for token in span]
         sent = [w for w in sent if w not in punct]
         if len(sent) < n_input + 1:
             continue
@@ -133,6 +135,22 @@ def tokenize(text, n_input, max_words):
     if use_spacy:
         return tokenize_spacy(text, n_input, max_words)
     return tokenize_simple(text, max_words)
+
+
+def train_test(sentences, n_input, test_frac):
+    random.shuffle(sentences)
+    n_samples = sum((len(sent) - n_input) for sent in sentences)
+    n_test = int(n_samples * test_frac)
+    test = []
+    i_test = 0
+    for sent in sentences:
+        if i_test + len(sent) - n_input > n_test:
+            break
+        test.append(sent)
+        i_test += len(sent) - n_input
+    train = sentences[len(test):]
+    assert train and test, (len(sentences), len(test), len(train), test_frac)
+    return train, test
 
 
 def build_indexes(sentences, max_vocab):
@@ -173,8 +191,18 @@ def build_embeddings(word_index):
 text = make_text()
 print('%7d bytes' % len(text))
 sentences = tokenize(text, n_input, MAX_WORDS)
+print('ALL')
 print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
+
+train, test_sentences = train_test(sentences, n_input, test_frac)
+sentences = train
+
+print('TRAIN')
+print('%7d sentences' % len(sentences))
+print('%7d words' % sum(len(sent) for sent in sentences))
+
+
 word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 vocab_size = len(word_index)
 print('%7d vocab' % vocab_size)
@@ -277,12 +305,65 @@ init = tf.global_variables_initializer()
 os.makedirs(model_folder, exist_ok=True)
 saver = tf.train.Saver(max_to_keep=3)
 
+
+def demonstrate(indexes_x, indexes_y, onehot_pred, step, i):
+    indexes = [int(indexes_x[i, j]) for j in range(indexes_x.shape[1])]
+    symbols_in = [index_word.get(j, UNKNOWN) for j in indexes]
+    symbols_out = index_word.get(indexes_y[i], UNKNOWN)
+    v = tf.argmax(onehot_pred, 1).eval()
+    symbols_out_pred = index_word[int(v[i])]
+    mark = '****' if symbols_out_pred == symbols_out else ''
+    return "%5d: %60s -> [%s] -- [%s] %s" % (step, symbols_in, symbols_out, symbols_out_pred, mark)
+
+
+def make_prediction(session, x):
+    y_pred = tf.run([y], feed_dict={x: x})
+
+
+def test_model(session, x):
+    return tf.run([accuracy], feed_dict={x: x})
+
+
+def test_results(session):
+    batch_size = 1000
+
+    acc_total = 0.0
+    loss_total = 0.0
+    predictions = []
+
+    source = batch_getter(test_sentences, n_input, batch_size)
+
+    step = 0
+    # Process minibatches of size `batch_size`
+    for _, (indexes_x, indexes_y, onehot_y) in enumerate(source):
+        # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
+        frac = len(indexes_y) / n_samples
+
+        # Update the model
+        acc, loss, onehot_pred = session.run([accuracy, cost, pred],
+                                feed_dict={x: indexes_x,
+                                           y: onehot_y})
+        loss_total += loss * frac
+        acc_total += acc * frac
+        assert acc <= 1.0, (acc, loss, frac)
+        assert frac <= 1.0, (acc, loss, frac)
+        assert acc_total <= 1.0, (acc, loss)
+
+        for i in range(len(indexes_y)):
+            if step < 10:
+                predictions.append(demonstrate(indexes_x, indexes_y, onehot_pred, step, i))
+            step += 1
+
+    return loss_total, acc_total, predictions
+
+
 # Launch the graph
 with tf.Session() as session:
     session.run(init)
     writer.add_graph(session.graph)
     best_acc = 0.0
     best_epoch = -1
+    new_best = False
 
     if False:
         devices = session.list_devices()
@@ -292,8 +373,8 @@ with tf.Session() as session:
 
     for epoch in range(n_epochs):
         accuracies = []
-        acc_total = 0.0
-        loss_total = 0.0
+        train_acc = 0.0
+        train_loss = 0.0
         source = batch_getter(sentences, n_input, batch_size)
 
         # Process minibatches of size `batch_size`
@@ -305,25 +386,35 @@ with tf.Session() as session:
             _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
                                                     feed_dict={x: indexes_x,
                                                                y: onehot_y})
-            loss_total += loss * frac
-            acc_total += acc * frac
+            train_loss += loss * frac
+            train_acc += acc * frac
             accuracies.append(acc)
             assert acc <= 1.0, (acc, loss, frac, accuracies)
             assert frac <= 1.0, (acc, loss, frac, accuracies)
-            assert acc_total <= 1.0, (acc, loss, frac, accuracies)
+            assert train_acc <= 1.0, (acc, loss, frac, accuracies)
             # assert (len(accuracies) + 1) * batch_size > n_samples, (len(accuracies), batch_size, n_samples)
 
+        test_loss, test_acc, predictions = test_results(session)
         # Show some progress statistics
-        if acc_total > best_acc:
+        if test_acc > best_acc:
             best_epoch = epoch
-            best_acc = acc_total
-            saver.save(session, os.path.join(model_folder, 'model_%06d.ckpt' % step))
-            print('epoch=%3d acc=%.2f' % (epoch + 1, 100.0 * acc_total))
+            best_acc = test_acc
+            best_predictions = predictions
+            new_best = True
+            # saver.save(session, os.path.join(model_folder, 'model_%06d.ckpt' % step))
+            print('epoch=%3d train_acc=%.2f test_acc=%.2f' % (epoch + 1,
+                100.0 * train_acc, 100.0 * test_acc))
 
         done = epoch > best_epoch + patience or epoch == n_epochs - 1
         if (epoch + 1) % n_epochs_report == 0 or done:
-            print("epoch=%3d (best=%3d): Average Loss=%9.6f, Average Accuracy=%5.2f%%" %
-                  (epoch + 1, best_epoch + 1, loss_total, 100.0 * acc_total))
+            print("epoch=%3d (best=%3d): Train Loss=%9.6f Accuracy=%5.2f%% -- "
+                  "Test Loss=%9.6f  Accuracy=%5.2f%%" %
+                  (epoch + 1, best_epoch + 1,
+                   train_loss, 100.0 * train_acc,
+                   test_loss, 100.0 * test_acc))
+            if new_best:
+                print('\n'.join(best_predictions))
+                new_best = False
 
             # indexes = [int(indexes_x[0, i]) for i in range(indexes_x.shape[1])]
             # symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
