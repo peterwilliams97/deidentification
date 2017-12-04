@@ -11,14 +11,13 @@ import os
 
 # Parameters
 MAX_VOCAB = 40000
-SMALL_TEXT = True
+SMALL_TEXT = False
 learning_rate = 0.001
-training_iters = 200000
-display_step = 1000
 n_input = 3
 batch_size = 100
 train_frac = .1
-patience = 5
+n_epochs = 10000
+patience = 10
 model_folder = 'models'
 
 # number of units in RNN cell
@@ -85,9 +84,9 @@ def build_indexes(all_words, MAX_VOCAB):
     vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:MAX_VOCAB - 1]
     vocabulary_list.append(UNKNOWN)
     vocabulary = set(vocabulary_list)
-    for i, w in enumerate(all_words[:5]):
-        marker = '***' if w in vocabulary else ''
-        print('%3d: %-20s %s' % (i, w, marker))
+    # for i, w in enumerate(all_words[:5]):
+    #     marker = '***' if w in vocabulary else ''
+    #     print('%3d: %-20s %s' % (i, w, marker))
 
     vocab_size = len(vocabulary)
     unk_index = vocab_size - 1
@@ -95,11 +94,11 @@ def build_indexes(all_words, MAX_VOCAB):
     word_index[UNKNOWN] = unk_index
     index_word = {i: w for w, i in word_index.items()}
 
-    for i in sorted(index_word)[:5]:
-        print(i, index_word[i], type(i))
+    # for i in sorted(index_word)[:5]:
+    #     print(i, index_word[i], type(i))
 
-    for i in range(vocab_size):
-        assert i in index_word, i
+    # for i in range(vocab_size):
+    #     assert i in index_word, i
 
     return word_index, index_word, unk_index
 
@@ -113,49 +112,49 @@ def build_embeddings(word_index):
 
 
 text = make_text()
-print('%d bytes' % len(text))
+print('%7d bytes' % len(text))
 all_words = tokenize(text)
+print('%7d words' % len(all_words))
 word_index, index_word, unk_index = build_indexes(all_words, MAX_VOCAB)
 vocab_size = len(word_index)
+print('%7d vocab' % vocab_size)
 embeddings, unk_embedding = build_embeddings(word_index)
+n_samples = len(all_words) - n_input - 2
+print('%7d samples' % n_samples)
 
 
-def data_getter(n_input):
-    """Generator that returns x, y, oneh_y
-        phrase is a random phrase of length n_input + 1 from all_words
-        x = indexes of first n_input words
-        y = index of last word
-        returns x, y, one hot encoding of y
-    """
-    while True:
-        i = random.randint(0, len(all_words) - n_input - 1)
-        phrase = all_words[i:i + n_input + 1]
-        wx = [word_index.get(phrase[j], unk_index) for j in range(n_input)]
-        wy = word_index.get(phrase[n_input], unk_index)
-
-        oneh_y = embeddings.get(phrase[n_input], unk_embedding)
-        indexes_x = np.array(wx)
-        indexes_y = np.array(wy)
-        yield indexes_x, indexes_y, oneh_y
-
-
-def batch_getter(n_input, batch_size):
+def batch_getter(all_words, n_input, batch_size):
     """Generator that returns x, y, oneh_y in `batch_size` batches
         phrase is a random phrase of length n_input + 1 from all_words
         x = indexes of first n_input words
         y = index of last word
         returns x, y, one hot encoding of y
     """
-    source = data_getter(n_input)
-    while True:
-        oneh_y = np.empty((batch_size, vocab_size), dtype=np.float32)
-        indexes_x = np.empty((batch_size, n_input), dtype=int)
-        indexes_y = np.empty((batch_size), dtype=int)
-        for i in range(batch_size):
-            w_x, w_y, oh_y = next(source)
-            indexes_x[i] = w_x
-            indexes_y[i] = w_y
-            oneh_y[i] = oh_y
+    sequence_numbers = list(range(n_samples))
+    random.shuffle(sequence_numbers)
+
+    for k in range(0, len(sequence_numbers), batch_size):
+        n = min(len(sequence_numbers) - k, batch_size)
+        # print('****', k, n, len(sequence_numbers))
+        oneh_y = np.empty((n, vocab_size), dtype=np.float32)
+        indexes_x = np.empty((n, n_input), dtype=int)
+        indexes_y = np.empty((n), dtype=int)
+
+        for j in range(n):
+            i = sequence_numbers[j + k]
+            assert i < len(all_words) - n_input - 1, (i, len(all_words), n_input)
+            assert i + n_input < len(all_words), 'i=%d j=%d words=%d sequence_numbers n_input=%d' % (
+                i, j, len(all_words), len(sequence_numbers), n_input)
+            phrase_x = all_words[i:i + n_input]
+            phrase_y = all_words[i + n_input]
+            wx = [word_index.get(w, unk_index) for w in phrase_x]
+            wy = word_index.get(phrase_y, unk_index)
+
+            indexes_x[j] = np.array(wx)
+            indexes_y[j] = np.array(wy)
+            oneh_y[j] = embeddings.get(phrase_y, unk_embedding)
+
+        # show('indexes_x', indexes_y)
         yield indexes_x, indexes_y, oneh_y
 
 
@@ -207,8 +206,6 @@ optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost
 correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
-source = batch_getter(n_input, batch_size)
-
 # Initializing the variables
 init = tf.global_variables_initializer()
 
@@ -218,70 +215,82 @@ saver = tf.train.Saver(max_to_keep=3)
 # Launch the graph
 with tf.Session() as session:
     session.run(init)
-    step = 0
-    offset = random.randint(0, n_input + 1)
-    end_offset = n_input + 1
-    acc_total = 0
-    loss_total = 0
-    best_acc = 0.0
-    best_step = -1
-
     writer.add_graph(session.graph)
+    best_acc = 0.0
+    best_epoch = -1
 
-    for step in range(training_iters):
-        # Generate a minibatch.
-        indexes_x, indexes_y, onehot_y = next(source)
+    if False:
+        devices = session.list_devices()
+        for d in devices:
+            print(d.name)
+        assert False
 
-        # Update the model
-        _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
-                                                feed_dict={x: indexes_x,
-                                                           y: onehot_y})
+    for epoch in range(n_epochs):
+        accuracies = []
+        acc_total = 0.0
+        loss_total = 0.0
+        source = batch_getter(all_words, n_input, batch_size)
+
+        # Process minibatches of size `batch_size`
+        for step, (indexes_x, indexes_y, onehot_y) in enumerate(source):
+            # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
+            frac = len(indexes_y) / n_samples
+
+            # Update the model
+            _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
+                                                    feed_dict={x: indexes_x,
+                                                               y: onehot_y})
+            loss_total += loss * frac
+            acc_total += acc * frac
+            accuracies.append(acc)
+            assert acc <= 1.0, (acc, loss, frac, accuracies)
+            assert frac <= 1.0, (acc, loss, frac, accuracies)
+            assert acc_total <= 1.0, (acc, loss, frac, accuracies)
+            # assert (len(accuracies) + 1) * batch_size > n_samples, (len(accuracies), batch_size, n_samples)
 
         # Show some progress statistics
-        loss_total += loss
-        acc_total += acc
-        if (step + 1) % display_step == 0:
-            if acc_total > best_acc:
-                best_step = step
-                best_acc = acc_total
-                saver.save(session, os.path.join(model_folder, 'model_%06d.ckpt' % step))
+        if acc_total > best_acc:
+            best_epoch = epoch
+            best_acc = acc_total
+            saver.save(session, os.path.join(model_folder, 'model_%06d.ckpt' % step))
+            print('epoch=%3d acc=%.2f' % (epoch + 1, 100.0 * acc_total))
 
-            print("Iter=%6d (best=%6d): Average Loss=%9.6f, Average Accuracy=%5.2f%%" %
-                  (step + 1, best_step + 1, loss_total / display_step, 100.0 * acc_total / display_step))
+        done = epoch > best_epoch + patience or epoch == n_epochs - 1
+        if (epoch + 1) % 100 == 0 or done:
+            print("epoch=%3d (best=%3d): Average Loss=%9.6f, Average Accuracy=%5.2f%%" %
+                  (epoch + 1, best_epoch + 1, loss_total, 100.0 * acc_total))
 
-            acc_total = 0
-            loss_total = 0
-            indexes = [int(indexes_x[0, i]) for i in range(indexes_x.shape[1])]
-            symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
-            symbols_out = index_word.get(indexes_y[0], UNKNOWN)
-            v = tf.argmax(onehot_pred, 1).eval()
-            symbols_out_pred = index_word[int(v[0])]
-            print("%s -> [%s] predicted [%s]" % (symbols_in, symbols_out, symbols_out_pred))
+            # indexes = [int(indexes_x[0, i]) for i in range(indexes_x.shape[1])]
+            # symbols_in = [index_word.get(i, UNKNOWN) for i in indexes]
+            # symbols_out = index_word.get(indexes_y[0], UNKNOWN)
+            # v = tf.argmax(onehot_pred, 1).eval()
+            # symbols_out_pred = index_word[int(v[0])]
+            # print("%s -> [%s] predicted [%s]" % (symbols_in, symbols_out, symbols_out_pred))
 
-            if step > best_step + patience * display_step:
-                break
+        if done:
+            break
 
     print("Optimization Finished!")
     print("Elapsed time: ", elapsed())
     print("Run on command line.")
     print("\ttensorboard --logdir=%s" % (logs_path))
     print("Point your web browser to: http://localhost:6006/")
-    while True:
-        prompt = "%s words: " % n_input
-        sentence = input(prompt)
-        sentence = sentence.strip()
-        words = sentence.split(' ')
-        if len(words) != n_input:
-            continue
-        try:
-            indexes = [word_index.get(w, unk_index) for w in words]
-            for i in range(32):
-                keys = np.reshape(np.array(indexes), [-1, n_input])
-                onehot_pred = session.run(pred, feed_dict={x: keys})
-                indexes_pred = int(tf.argmax(onehot_pred, 1).eval())
-                sentence = "%s %s" % (sentence, index_word[indexes_pred])
-                indexes = indexes[1:]
-                indexes.append(indexes_pred)
-            print(sentence)
-        except KeyError:
-            print("Word not in dictionary")
+    # while True:
+    #     prompt = "%s words: " % n_input
+    #     sentence = input(prompt)
+    #     sentence = sentence.strip()
+    #     words = sentence.split(' ')
+    #     if len(words) != n_input:
+    #         continue
+    #     try:
+    #         indexes = [word_index.get(w, unk_index) for w in words]
+    #         for i in range(32):
+    #             keys = np.reshape(np.array(indexes), [-1, n_input])
+    #             onehot_pred = session.run(pred, feed_dict={x: keys})
+    #             indexes_pred = int(tf.argmax(onehot_pred, 1).eval())
+    #             sentence = "%s %s" % (sentence, index_word[indexes_pred])
+    #             indexes = indexes[1:]
+    #             indexes.append(indexes_pred)
+    #         print(sentence)
+    #     except KeyError:
+    #         print("Word not in dictionary")
