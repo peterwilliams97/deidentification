@@ -15,7 +15,7 @@ from collections import defaultdict
 seed = 112
 use_spacy = True
 MAX_VOCAB = 40000
-MAX_WORDS = 1000000
+MAX_WORDS = 10000
 SMALL_TEXT = False
 learning_rate = 0.001
 n_input = 3
@@ -138,6 +138,9 @@ def tokenize(text, n_input, max_words):
 
 
 def train_test(sentences, n_input, test_frac):
+    """Spilt sentences list into training and test lists.
+        training will have test_frac of the words in sentences
+    """
     random.shuffle(sentences)
     n_samples = sum((len(sent) - n_input) for sent in sentences)
     n_test = int(n_samples * test_frac)
@@ -159,22 +162,20 @@ def build_indexes(sentences, max_vocab):
         for w in sent:
             word_counts[w] += 1
     vocabulary_list = sorted(word_counts, key=lambda x: (-word_counts[x], x))[:max_vocab - 1]
-    vocabulary_list.append(UNKNOWN)
-    vocabulary = set(vocabulary_list)
-    # for i, w in enumerate(words[:5]):
-    #     marker = '***' if w in vocabulary else ''
-    #     print('%3d: %-20s %s' % (i, w, marker))
+    vocabulary_list = [UNKNOWN] + vocabulary_list
+    # vocabulary = set(vocabulary_list)
+    # # for i, w in enumerate(words[:5]):
+    # #     marker = '***' if w in vocabulary else ''
+    # #     print('%3d: %-20s %s' % (i, w, marker))
 
-    vocab_size = len(vocabulary)
-    unk_index = vocab_size - 1
+    unk_index = 0
     word_index = {w: i for i, w in enumerate(vocabulary_list)}
-    word_index[UNKNOWN] = unk_index
     index_word = {i: w for w, i in word_index.items()}
 
     # for i in sorted(index_word)[:5]:
     #     print(i, index_word[i], type(i))
 
-    # for i in range(vocab_size):
+    # for i in range(vocabulary_size):
     #     assert i in index_word, i
 
     return word_index, index_word, unk_index
@@ -204,8 +205,8 @@ print('%7d words' % sum(len(sent) for sent in sentences))
 
 
 word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
-vocab_size = len(word_index)
-print('%7d vocab' % vocab_size)
+vocabulary_size = len(word_index)
+print('%7d vocab' % vocabulary_size)
 embeddings, unk_embedding = build_embeddings(word_index)
 n_samples = sum((len(sent) - n_input) for sent in sentences)
 print('%7d samples' % n_samples)
@@ -227,7 +228,7 @@ def batch_getter(sentences, n_input, batch_size):
     for k0 in range(0, len(sequence_numbers), batch_size):
         n = min(len(sequence_numbers) - k0, batch_size)
         # print('****', k, n, len(sequence_numbers))
-        oneh_y = np.empty((n, vocab_size), dtype=np.float32)
+        oneh_y = np.empty((n, vocabulary_size), dtype=np.float32)
         indexes_x = np.empty((n, n_input), dtype=int)
         indexes_y = np.empty((n), dtype=int)
 
@@ -255,11 +256,19 @@ def batch_getter(sentences, n_input, batch_size):
 # x = indexes of first n_input words in phrase
 # y = one hot encoding of last word in phrase
 x = tf.placeholder("float", [None, n_input])
-y = tf.placeholder("float", [None, vocab_size])
+y = tf.placeholder("float", [None, vocabulary_size])
 
 # RNN output node weights and biases
-weights = tf.Variable(tf.random_normal([n_hidden, vocab_size]))
-biases = tf.Variable(tf.random_normal([vocab_size]))
+weights = tf.Variable(tf.random_normal([n_hidden, vocabulary_size]))
+biases = tf.Variable(tf.random_normal([vocabulary_size]))
+
+# # https://www.tensorflow.org/programmers_guide/embedding
+# word_embeddings = tf.get_variable(“word_embeddings”, [vocabulary_size, embedding_size])
+# embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
+
+# embeddings = tf.Variable(
+#         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
+#     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
 
 def RNN(x, weights, biases):
