@@ -15,7 +15,7 @@ from collections import defaultdict
 seed = 112
 use_spacy = True
 MAX_VOCAB = 40000
-MAX_WORDS = 10000
+MAX_WORDS = 40000
 SMALL_TEXT = False
 learning_rate = 0.001
 n_input = 3
@@ -70,7 +70,8 @@ def make_text():
     if SMALL_TEXT:
         return read_text('belling_the_cat.txt')
     # mask = expanduser('~/testdata.clean/deploy/PDF32000_2008.txt')
-    mask = expanduser('~/testdata.clean/deploy/The_Block_Cipher_Companion.txt')
+    # mask = expanduser('~/testdata.clean/deploy/The_Block_Cipher_Companion.txt')
+    mask = expanduser('~/testdata.clean/deploy/Folk_o_bostadsrakningen_1970_12.txt')
 
     file_list = sorted(glob(mask))
     print('%d files' % len(file_list))
@@ -263,12 +264,12 @@ weights = tf.Variable(tf.random_normal([n_hidden, vocabulary_size]))
 biases = tf.Variable(tf.random_normal([vocabulary_size]))
 
 # # https://www.tensorflow.org/programmers_guide/embedding
-# word_embeddings = tf.get_variable(“word_embeddings”, [vocabulary_size, embedding_size])
-# embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
+word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
+embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
 
 # embeddings = tf.Variable(
 #         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
-#     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+# #     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
 
 def RNN(x, weights, biases):
