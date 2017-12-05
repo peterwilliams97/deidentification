@@ -14,9 +14,12 @@ from collections import defaultdict
 # Parameters
 seed = 112
 use_spacy = True
+INDEX_ALL_WORDS = True
 MAX_VOCAB = 40000
-MAX_WORDS = 40000
+MAX_WORDS = 10000
 SMALL_TEXT = False
+HOLMES = True
+assert not (SMALL_TEXT and HOLMES)
 learning_rate = 0.001
 n_input = 3
 batch_size = 100
@@ -69,6 +72,8 @@ def read_text(path):
 def make_text():
     if SMALL_TEXT:
         return read_text('belling_the_cat.txt')
+    if HOLMES:
+        return read_text('cano_bare.txt')
     # mask = expanduser('~/testdata.clean/deploy/PDF32000_2008.txt')
     # mask = expanduser('~/testdata.clean/deploy/The_Block_Cipher_Companion.txt')
     mask = expanduser('~/testdata.clean/deploy/Folk_o_bostadsrakningen_1970_12.txt')
@@ -197,6 +202,9 @@ print('ALL')
 print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
 
+if INDEX_ALL_WORDS:
+    word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
+
 train, test_sentences = train_test(sentences, n_input, test_frac)
 sentences = train
 
@@ -204,8 +212,9 @@ print('TRAIN')
 print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
 
+if not INDEX_ALL_WORDS:
+    word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 
-word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 vocabulary_size = len(word_index)
 print('%7d vocab' % vocabulary_size)
 embeddings, unk_embedding = build_embeddings(word_index)
@@ -263,13 +272,13 @@ y = tf.placeholder("float", [None, vocabulary_size])
 weights = tf.Variable(tf.random_normal([n_hidden, vocabulary_size]))
 biases = tf.Variable(tf.random_normal([vocabulary_size]))
 
-# # https://www.tensorflow.org/programmers_guide/embedding
-word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
-embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
+# # # https://www.tensorflow.org/programmers_guide/embedding
+# word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
+# embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
 
-# embeddings = tf.Variable(
-#         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
-# #     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+# # embeddings = tf.Variable(
+# #         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
+# # #     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
 
 def RNN(x, weights, biases):
