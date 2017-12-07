@@ -14,6 +14,10 @@ from collections import defaultdict
 # Parameters
 seed = 112
 use_spacy = True
+use_glove_embeddings = True
+embedding_size = 100
+embeddings_freeze = True
+embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
 MAX_VOCAB = 40000
 MAX_WORDS = 10000
@@ -27,6 +31,7 @@ test_frac = .2
 n_epochs = 1000
 n_epochs_report = 1
 patience = 100
+
 model_folder = 'models'
 
 # number of units in RNN cell
@@ -103,9 +108,6 @@ def tokenize_spacy(text, n_input, max_words):
     document = spacy_nlp(text)
     doc_sents = list(document.sents)
     print(len(doc_sents))
-    # for i, sent in enumerate(doc_sents[:20]):
-    #     print(i, type(sent), len(sent), sent[:5])
-    # sentences
     sentences = []
     n_words = 0
     for span in document.sents:
@@ -117,20 +119,7 @@ def tokenize_spacy(text, n_input, max_words):
         n_words += len(sent)
         if max_words > 0 and n_words >= max_words:
             break
-        # for token in sentence:
-        #     print(token)
-        #     token_dict = {}
-        #     token_dict['start'], token_dict['end'] = get_start_and_end_offset_of_token_from_spacy(token)
-        #     token_dict['text'] = text[token_dict['start']:token_dict['end']]
-        #     if token_dict['text'].strip() in ['\n', '\t', ' ', '']:
-        #         continue
-        #     # Make sure that the token text does not contain any space
-        #     if len(token_dict['text'].split(' ')) != 1:
-        #         print("WARNING: the text of the token contains space character, replaced with "
-        #               "hyphen\n\t{0}\n\t{1}".format(token_dict['text'], token_dict['text'].replace(' ', '-')))
-        #         token_dict['text'] = token_dict['text'].replace(' ', '-')
-        #     sentence_tokens.append(token_dict)
-        # sentences.append(sentence_tokens)
+
     print('!!!', len(sentences))
     for i, sent in enumerate(sentences[:5]):
         print(i, type(sent), len(sent), sent[:5])
@@ -141,6 +130,25 @@ def tokenize(text, n_input, max_words):
     if use_spacy:
         return tokenize_spacy(text, n_input, max_words)
     return tokenize_simple(text, max_words)
+
+
+# def neuroner(word_counts):
+#     """ !@#$ Use word_index and sort alphabetically
+#     """
+#     token_to_index = {}
+#     token_to_index[UNKNOWN] = UNK_TOKEN_INDEX
+
+#     def word_order(w):
+#         return -word_counts[w], w.lower(), w
+
+#     iteration_number = 0
+#     for token in sorted(word_counts, key=word_order):
+#         if iteration_number == UNK_TOKEN_INDEX:
+#             iteration_number += 1
+#         token_to_index[token] = iteration_number
+#         iteration_number += 1
+
+#     return token_to_index
 
 
 def train_test(sentences, n_input, test_frac):
@@ -184,15 +192,82 @@ def build_indexes(sentences, max_vocab):
     # for i in range(vocabulary_size):
     #     assert i in index_word, i
 
-    return word_index, index_word, unk_index
+    return word_counts, word_index, index_word, unk_index
 
 
-def build_embeddings(word_index):
+def load_word_embeddings(path):
+    import codecs
+    count = -1
+    word_vector = {}
+    with codecs.open(path, 'r', 'UTF-8') as f:
+        for line in f:
+            count += 1
+            # if count > 1000:break
+            line = line.strip()
+            line = line.split(' ')
+            if not line:
+                continue
+            token = line[0]
+            vector = np.array([float(x) for x in line[1:]])
+            word_vector[token] = vector
+    # f.close()
+    sizes = {v.size for v in word_vector.values()}
+    assert len(sizes) == 1, (len(sizes), sorted(sizes)[:10])
+    return word_vector
+
+
+# !@#$ not used
+def build_embeddings_onehot(word_index):
     embeddings = {w: np.zeros(len(word_index), dtype=np.float32) for w in word_index}
     for w, i in word_index.items():
         embeddings[w][i] = 1.0
     unk_embedding = embeddings[UNKNOWN]
     return embeddings, unk_embedding
+
+
+def build_embeddings_glove(word_index, embeddings_path):
+    word_vector = load_word_embeddings(embeddings_path)
+    v = next(iter(word_vector.values()))
+    unk_embedding = np.zeros(v.shape, dtype=v.dtype)
+    embeddings = {w: word_vector.get(w, unk_embedding) for w in word_index}
+    del word_vector
+    return embeddings, unk_embedding
+
+
+def build_embeddings(word_index):
+    if use_glove_embeddings:
+        return build_embeddings_glove(word_index, embeddings_path)
+    return build_embeddings_onehot(word_index)
+
+
+# !@#$ not used
+def load_embeddings_from_pretrained_model(sess, word_index, index_word):
+
+    embeddings, unk_embedding = build_embeddings_glove(word_index, embeddings_path)
+
+    index_to_string = index_word
+    pretraining_string_to_index = word_index
+
+    # Load embeddings
+    start_time = time.time()
+    print('Load embeddings from pretrained model... ', end='', flush=True)
+    initial_weights = sess.run(token_embedding_weights.read_value())
+    show('initial_weights', initial_weights)
+
+    initial_weights[unk_index] = unk_embedding
+
+    number_of_loaded_vectors = 1
+    for index, word in index_word.items():
+        if index == unk_index:
+            continue
+        if word in word_index:
+            initial_weights[index] = embeddings[word]
+            number_of_loaded_vectors += 1
+    elapsed_time = time.time() - start_time
+    print('done ({0:.2f} seconds)'.format(elapsed_time))
+    print("number_of_loaded_vectors: {0}".format(number_of_loaded_vectors))
+    print("dataset.vocabulary_size: {0}".format(vocabulary_size))
+    sess.run(token_embedding_weights.assign(initial_weights))
 
 
 text = make_text()
@@ -203,7 +278,7 @@ print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
 
 if INDEX_ALL_WORDS:
-    word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
+    word_counts, word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 
 train, test_sentences = train_test(sentences, n_input, test_frac)
 sentences = train
@@ -213,11 +288,16 @@ print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
 
 if not INDEX_ALL_WORDS:
-    word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
+    word_counts, word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 
 vocabulary_size = len(word_index)
 print('%7d vocab' % vocabulary_size)
+vector_size = embedding_size if use_glove_embeddings else vocabulary_size
+print('%7d vector_size' % vector_size)
+
+# not used !@#$
 embeddings, unk_embedding = build_embeddings(word_index)
+onehots, unk_onehot = build_embeddings_onehot(word_index)
 n_samples = sum((len(sent) - n_input) for sent in sentences)
 print('%7d samples' % n_samples)
 
@@ -256,11 +336,13 @@ def batch_getter(sentences, n_input, batch_size):
 
             indexes_x[k] = np.array(wx)
             indexes_y[k] = np.array(wy)
-            oneh_y[k] = embeddings.get(phrase_y, unk_embedding)
+            oneh_y[k] = onehots.get(phrase_y, unk_onehot)
 
         # show('indexes_x', indexes_y)
         yield indexes_x, indexes_y, oneh_y
 
+
+initializer = tf.contrib.layers.xavier_initializer()
 
 # tf Graph inputs
 # x = indexes of first n_input words in phrase
@@ -268,7 +350,7 @@ def batch_getter(sentences, n_input, batch_size):
 x = tf.placeholder("float", [None, n_input])
 y = tf.placeholder("float", [None, vocabulary_size])
 
-# RNN output node weights and biases
+# RNN output node weights and biases  !@#$ n_hidden -> hidden_size
 weights = tf.Variable(tf.random_normal([n_hidden, vocabulary_size]))
 biases = tf.Variable(tf.random_normal([vocabulary_size]))
 
@@ -279,6 +361,12 @@ biases = tf.Variable(tf.random_normal([vocabulary_size]))
 # # embeddings = tf.Variable(
 # #         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
 # # #     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+
+# token_embedding_weights = tf.get_variable(
+#                  "token_embedding_weights",
+#                   shape=[vocabulary_size, embedding_size],
+#                   initializer=initializer,
+#                   trainable=not embeddings_freeze)
 
 
 def RNN(x, weights, biases):
@@ -303,18 +391,20 @@ def RNN(x, weights, biases):
     outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
 
     # there are n_input outputs but we only want the last output
-    y = tf.matmul(outputs[-1], weights) + biases
-    show('y', y)
-    return y
+    logits = tf.matmul(outputs[-1], weights) + biases
+    # logits = tf.nn.xw_plus_b(outputs, weights, biases)
+    show('logits', logits)
+    return logits
 
 
 pred = RNN(x, weights, biases)
 
 # Loss and optimizer
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y))
+loss = tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y)
+cost = tf.reduce_mean(loss)
 optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 
-# Model evaluation
+# Model evaluation !@#$ For embeddings?
 correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
@@ -336,7 +426,7 @@ def demonstrate(indexes_x, indexes_y, onehot_pred, step, i):
 
 
 def make_prediction(session, x):
-    y_pred = tf.run([y], feed_dict={x: x})
+    return tf.run([y], feed_dict={x: x})
 
 
 def test_model(session, x):
@@ -377,9 +467,17 @@ def test_results(session):
 
 
 # Launch the graph
+print('@@0')
 with tf.Session() as session:
+    print('@@1')
     session.run(init)
+    print('@@2')
     writer.add_graph(session.graph)
+    print('@@3')
+
+    # load_embeddings_from_pretrained_model(session, word_index, index_word)
+    print('@@4')
+
     best_acc = 0.0
     best_epoch = -1
     new_best = False
@@ -401,6 +499,9 @@ with tf.Session() as session:
             # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
             frac = len(indexes_y) / n_samples
 
+            # show('indexes_x', indexes_x)
+            # show('onehot_y', onehot_y)
+
             # Update the model
             _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
                                                     feed_dict={x: indexes_x,
@@ -408,11 +509,10 @@ with tf.Session() as session:
             train_loss += loss * frac
             train_acc += acc * frac
             accuracies.append(acc)
-            assert acc <= 1.0, (acc, loss, frac, accuracies)
-            assert frac <= 1.0, (acc, loss, frac, accuracies)
-            assert train_acc <= 1.0, (acc, loss, frac, accuracies)
-            # assert (len(accuracies) + 1) * batch_size > n_samples, (len(accuracies), batch_size, n_samples)
-
+            assert acc <= 1.0, (acc, loss, frac)
+            assert frac <= 1.0, (acc, loss, frac)
+            assert train_acc <= 1.0, (acc, loss, frac)
+            assert loss >= 0.0, (acc, loss, frac)
         test_loss, test_acc, predictions = test_results(session)
         # Show some progress statistics
         if test_acc > best_acc:
