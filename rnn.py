@@ -58,7 +58,7 @@ def elapsed():
         return "%.2f hour" % (sec / (60 * 60))
 
 
-def show(name, x):
+def describe(x):
     try:
         v = '%s:%s' % (list(x.shape), x.dtype)
     except AttributeError:
@@ -66,6 +66,14 @@ def show(name, x):
             v = '%d:%s' % (len(x), type(x[0]))
         else:
             v = type(x)
+    return v
+
+
+def show(name, x):
+    if isinstance(x, (list, tuple)):
+        v = '%d:%s' % (len(x), describe(x))
+    else:
+        v = describe(x)
     print('"%s"=%s' % (name, v))
 
 
@@ -391,21 +399,20 @@ def RNN(x, weights, biases):
     outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
 
     # there are n_input outputs but we only want the last output
-    logits = tf.matmul(outputs[-1], weights) + biases
-    # logits = tf.nn.xw_plus_b(outputs, weights, biases)
+    logits = tf.nn.xw_plus_b(outputs[-1], weights, biases)
     show('logits', logits)
     return logits
 
 
-pred = RNN(x, weights, biases)
+logits = RNN(x, weights, biases)
 
 # Loss and optimizer
-loss = tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y)
+loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
 cost = tf.reduce_mean(loss)
 optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 
 # Model evaluation !@#$ For embeddings?
-correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
+correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
@@ -449,7 +456,7 @@ def test_results(session):
         frac = len(indexes_y) / n_samples
 
         # Update the model
-        acc, loss, onehot_pred = session.run([accuracy, cost, pred],
+        acc, loss, onehot_pred = session.run([accuracy, cost, logits],
                                 feed_dict={x: indexes_x,
                                            y: onehot_y})
         loss_total += loss * frac
@@ -503,7 +510,7 @@ with tf.Session() as session:
             # show('onehot_y', onehot_y)
 
             # Update the model
-            _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, pred],
+            _, acc, loss, onehot_pred = session.run([optimizer, accuracy, cost, logits],
                                                     feed_dict={x: indexes_x,
                                                                y: onehot_y})
             train_loss += loss * frac
