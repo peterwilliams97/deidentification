@@ -272,7 +272,11 @@ def predict(source_batch):
 
 def evaluate(source_batch, target_batch, dec_input):
     dec_input = predict(source_batch)
-    print('Accuracy on test set is: %6.3f' % np.mean(dec_input == target_batch))
+    correct = np.sum(dec_input == target_batch)
+    total = len(target_batch)
+    acc = correct / total
+    print('Accuracy on test set is: %6.3f %6.3f' % np.mean(dec_input == target_batch), acc)
+    return total, correct
 
 
 def demonstrate(source_batch, dec_input, num_preds):
@@ -286,8 +290,16 @@ def demonstrate(source_batch, dec_input, num_preds):
         print('%20s => %s' % (''.join(date_in), ''.join(date_out)))
 
 
+def predict_eval():
+    source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
+    dec_input = predict(source_batch)
+    total, correct = evaluate(source_batch, target_batch, dec_input)
+    demonstrate(source_batch, dec_input, num_preds=10)
+
 # Translate on test set
-source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
-dec_input = predict(source_batch)
-evaluate(source_batch, target_batch, dec_input)
-demonstrate(source_batch, dec_input, num_preds=10)
+# source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
+# dec_input = predict(source_batch)
+# evaluate(source_batch, target_batch, dec_input)
+# demonstrate(source_batch, dec_input, num_preds=10)
+
+predict_eval()
