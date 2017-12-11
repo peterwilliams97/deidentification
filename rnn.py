@@ -383,7 +383,6 @@ def RNN(x, weights, biases):
             g = LSTM
             x = indexes of input words
             y = one-hot encoding of output word
-
     """
     show('x', x)
 
@@ -407,7 +406,14 @@ def RNN(x, weights, biases):
 logits = RNN(x, weights, biases)
 
 # Loss and optimizer
-loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
+# loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
+# Use the contrib sequence loss and average over the batches
+loss = tf.contrib.seq2seq.sequence_loss(
+        logits,
+        y,
+        tf.ones([batch_size, self.num_steps], dtype=tf.float32),
+        average_across_timesteps=False,
+        average_across_batch=True)
 cost = tf.reduce_mean(loss)
 optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 

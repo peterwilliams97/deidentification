@@ -190,74 +190,66 @@ targets = tf.placeholder(tf.int32, (None, None), 'targets')
 # Embedding layers
 input_embedding = tf.Variable(tf.random_uniform((len(char2numX), embed_size), -1.0, 1.0),
                               name='enc_embedding')
+show('input_embedding', input_embedding)
+# TODO: create the variable output embedding
 output_embedding = tf.Variable(tf.random_uniform((len(char2numY), embed_size), -1.0, 1.0),
                                name='dec_embedding')
+show('output_embedding', output_embedding)
+
+# TODO: Use tf.nn.embedding_lookup to complete the next two lines
 date_input_embed = tf.nn.embedding_lookup(input_embedding, inputs)
 date_output_embed = tf.nn.embedding_lookup(output_embedding, outputs)
+show('date_input_embed', date_input_embed)
+show('date_output_embed', date_output_embed)
 
 with tf.variable_scope("encoding") as encoding_scope:
     lstm_enc = tf.contrib.rnn.BasicLSTMCell(nodes)
     _, last_state = tf.nn.dynamic_rnn(lstm_enc, inputs=date_input_embed, dtype=tf.float32)
 
 with tf.variable_scope("decoding") as decoding_scope:
+    # TODO: create the decoder LSTMs, this is very similar to the above
+    # you will need to set initial_state=last_state from the encoder
     lstm_dec = tf.contrib.rnn.BasicLSTMCell(nodes)
     dec_outputs, _ = tf.nn.dynamic_rnn(lstm_dec, inputs=date_output_embed,
                                        initial_state=last_state)
-#connect outputs to
+# connect outputs to
+# len(char2numY)=13
 logits = tf.contrib.layers.fully_connected(dec_outputs, num_outputs=len(char2numY),
                                            activation_fn=None)
 with tf.name_scope("optimization"):
-    # Loss function
+    # Loss function logits and labels must have the same first dimension,
+    # got logits shape [3712,13] and labels shape [1280]
+    show('logits', logits)
+    show('targets', targets)
     loss = tf.contrib.seq2seq.sequence_loss(logits, targets, tf.ones([batch_size, y_seq_length]))
     # Optimizer
     optimizer = tf.train.RMSPropOptimizer(1e-3).minimize(loss)
 
-
-# In[13]:
-
-dec_outputs.get_shape().as_list()
-
-
-# In[14]:
-
-last_state[0].get_shape().as_list()
+print('dec_outputs=%s' % dec_outputs.get_shape().as_list())
+print('last_state[0]=%s' % last_state[0].get_shape().as_list())
+print('inputs=%s' % inputs.get_shape().as_list())
+print('date_input_embed=%s' % date_input_embed.get_shape().as_list())
 
 
-# In[15]:
-
-inputs.get_shape().as_list()
-
-
-# In[16]:
-
-date_input_embed.get_shape().as_list()
-
-
-# Train the graph above:
-
-# In[17]:
-
+# Train the graph
 show_graph(tf.get_default_graph().as_graph_def())
-
-
-# In[18]:
 
 X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
 
-
-# In[19]:
-
 sess.run(tf.global_variables_initializer())
-epochs = 10
+print('@' * 80)
 for epoch_i in range(epochs):
     start_time = time.time()
-    for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_train, y_train,
-                                                                      batch_size)):
+    for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_train, y_train, batch_size)):
+        print('batch_i=%d' % (batch_i))
+        show('inputs', source_batch)
+        show('outputs', target_batch[:, :-1])
+        show('targets', target_batch[:, 1:])
         _, batch_loss, batch_logits = sess.run([optimizer, loss, logits],
-            feed_dict = {inputs: source_batch,
-                         outputs: target_batch[:, :-1],
-                         targets: target_batch[:, 1:]})
-    accuracy = np.mean(batch_logits.argmax(axis=-1) == target_batch[:,1:])
+            feed_dict={inputs: source_batch,
+                       outputs: target_batch[:, :-1],
+                       targets: target_batch[:, 1:]})
+    accuracy = np.mean(batch_logits.argmax(axis=-1) == target_batch[:, 1:])
     print('Epoch {:3} Loss: {:>6.3f} Accuracy: {:>6.4f} Epoch duration: {:>6.3f}s'.format(
           epoch_i, batch_loss,
           accuracy, time.time() - start_time))
