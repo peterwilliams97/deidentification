@@ -163,7 +163,7 @@ def batch_data(x, y, batch_size):
         yield x[start:start + batch_size], y[start:start + batch_size]
 
 
-epochs = 5
+epochs = 2
 batch_size = 128
 nodes = 32
 embed_size = 10
@@ -239,10 +239,6 @@ print('@' * 80)
 for epoch_i in range(epochs):
     start_time = time.time()
     for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_train, y_train, batch_size)):
-        # print('batch_i=%d' % (batch_i))
-        # show('inputs', source_batch)
-        # show('outputs', target_batch[:, :-1])
-        # show('targets', target_batch[:, 1:])
         _, batch_loss, batch_logits = sess.run([optimizer, loss, logits],
             feed_dict={inputs: source_batch,
                        outputs: target_batch[:, :-1],
@@ -251,36 +247,47 @@ for epoch_i in range(epochs):
     print('Epoch {:3} Loss: {:>6.3f} Accuracy: {:>6.4f} Epoch duration: {:>6.3f}s'.format(
           epoch_i, batch_loss, accuracy, time.time() - start_time))
 
+
+def predict(source_batch):
+    dec_input = np.ones((len(source_batch), 1)) * char2numY['<GO>']
+    # show('dec_input1', dec_input)
+    # print(dec_input)
+
+    # Build y sequence left to right
+    for _ in range(y_seq_length):
+        batch_logits = sess.run(logits,
+                                feed_dict={inputs: source_batch,
+                                           outputs: dec_input})
+        prediction = batch_logits[:, -1].argmax(axis=-1)
+        dec_input = np.hstack([dec_input, prediction[:, None]])
+        # show('batch_logits', batch_logits)
+        # show('prediction', prediction)
+        # show('dec_input', dec_input)
+        # print(batch_logits[0, :, 0])
+        # print(prediction[0])
+        # print(dec_input[0, :])
+
+    return dec_input
+
+
+def evaluate(source_batch, target_batch, dec_input):
+    dec_input = predict(source_batch)
+    print('Accuracy on test set is: %6.3f' % np.mean(dec_input == target_batch))
+
+
+def demonstrate(source_batch, dec_input, num_preds):
+    # Randomly take `num_preds` from the test set and see what it spits out:
+    # !@#$ shuffe
+    source_chars = [[num2charX[l] for l in sent if num2charX[l] != "<PAD>"]
+                    for sent in source_batch[:num_preds]]
+    dest_chars = [[num2charY[l] for l in sent] for sent in dec_input[:num_preds, 1:]]
+
+    for date_in, date_out in zip(source_chars, dest_chars):
+        print('%20s => %s' % (''.join(date_in), ''.join(date_out)))
+
+
 # Translate on test set
 source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
-
-dec_input = np.zeros((len(source_batch), 1)) + char2numY['<GO>']
-for _ in range(y_seq_length):
-    batch_logits = sess.run(logits,
-                            feed_dict={inputs: source_batch,
-                                       outputs: dec_input})
-    prediction = batch_logits[:, -1].argmax(axis=-1)
-    dec_input = np.hstack([dec_input, prediction[:, None]])
-    show('batch_logits', batch_logits)
-    show('prediction', prediction)
-    show('dec_input', dec_input)
-    print(batch_logits[0, :, 0])
-    print(prediction[0])
-    print(dec_input[0, :])
-
-print('Accuracy on test set is: %6.3f' % np.mean(dec_input == target_batch))
-show('dec_input', dec_input)
-show('target_batch', target_batch)
-for i in range(5):
-    print(i)
-    print(dec_input[i, :])
-    print(target_batch[i, :])
-
-# Let's randomly take two from this test set and see what it spits out:
-num_preds = 10
-source_chars = [[num2charX[l] for l in sent if num2charX[l] != "<PAD>"]
-                for sent in source_batch[:num_preds]]
-dest_chars = [[num2charY[l] for l in sent] for sent in dec_input[:num_preds, 1:]]
-
-for date_in, date_out in zip(source_chars, dest_chars):
-    print('%20s => %s' % (''.join(date_in), ''.join(date_out)))
+dec_input = predict(source_batch)
+evaluate(source_batch, target_batch, dec_input)
+demonstrate(source_batch, dec_input, num_preds=10)
