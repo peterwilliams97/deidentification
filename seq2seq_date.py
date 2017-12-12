@@ -102,9 +102,9 @@ def create_date():
 
         machine = dt.isoformat()
     except AttributeError as e:
-        return None, None, None
+        return None, None
 
-    return human, machine  # , dt
+    return human, machine
 
 
 data = [create_date() for _ in range(50000)]
@@ -163,10 +163,11 @@ def batch_data(x, y, batch_size):
         yield x[start:start + batch_size], y[start:start + batch_size]
 
 
-epochs = 2
+epochs = 200
 batch_size = 128
 nodes = 32
 embed_size = 10
+patience = 5
 
 print('=' * 80)
 print('epochs=%d' % epochs)
@@ -211,8 +212,7 @@ with tf.variable_scope("decoding") as decoding_scope:
     lstm_dec = tf.contrib.rnn.BasicLSTMCell(nodes)
     dec_outputs, _ = tf.nn.dynamic_rnn(lstm_dec, inputs=date_output_embed,
                                        initial_state=last_state)
-# connect outputs to
-# len(char2numY)=13
+
 logits = tf.contrib.layers.fully_connected(dec_outputs, num_outputs=len(char2numY),
                                            activation_fn=None)
 with tf.name_scope("optimization"):
@@ -229,29 +229,9 @@ print('last_state[0]=%s' % last_state[0].get_shape().as_list())
 print('inputs=%s' % inputs.get_shape().as_list())
 print('date_input_embed=%s' % date_input_embed.get_shape().as_list())
 
-# Train the graph
-show_graph(tf.get_default_graph().as_graph_def())
-
-X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
-
-sess.run(tf.global_variables_initializer())
-print('@' * 80)
-for epoch_i in range(epochs):
-    start_time = time.time()
-    for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_train, y_train, batch_size)):
-        _, batch_loss, batch_logits = sess.run([optimizer, loss, logits],
-            feed_dict={inputs: source_batch,
-                       outputs: target_batch[:, :-1],
-                       targets: target_batch[:, 1:]})
-    accuracy = np.mean(batch_logits.argmax(axis=-1) == target_batch[:, 1:])
-    print('Epoch {:3} Loss: {:>6.3f} Accuracy: {:>6.4f} Epoch duration: {:>6.3f}s'.format(
-          epoch_i, batch_loss, accuracy, time.time() - start_time))
-
 
 def predict(source_batch):
     dec_input = np.ones((len(source_batch), 1)) * char2numY['<GO>']
-    # show('dec_input1', dec_input)
-    # print(dec_input)
 
     # Build y sequence left to right
     for _ in range(y_seq_length):
@@ -260,12 +240,6 @@ def predict(source_batch):
                                            outputs: dec_input})
         prediction = batch_logits[:, -1].argmax(axis=-1)
         dec_input = np.hstack([dec_input, prediction[:, None]])
-        # show('batch_logits', batch_logits)
-        # show('prediction', prediction)
-        # show('dec_input', dec_input)
-        # print(batch_logits[0, :, 0])
-        # print(prediction[0])
-        # print(dec_input[0, :])
 
     return dec_input
 
@@ -273,33 +247,84 @@ def predict(source_batch):
 def evaluate(source_batch, target_batch, dec_input):
     dec_input = predict(source_batch)
     correct = np.sum(dec_input == target_batch)
-    total = len(target_batch)
-    acc = correct / total
-    print('Accuracy on test set is: %6.3f %6.3f' % np.mean(dec_input == target_batch), acc)
+    total = target_batch.size
     return total, correct
 
 
 def demonstrate(source_batch, dec_input, num_preds):
     # Randomly take `num_preds` from the test set and see what it spits out:
     # !@#$ shuffe
-    source_chars = [[num2charX[l] for l in sent if num2charX[l] != "<PAD>"]
-                    for sent in source_batch[:num_preds]]
-    dest_chars = [[num2charY[l] for l in sent] for sent in dec_input[:num_preds, 1:]]
+    source_sents = source_batch[:num_preds]
+    dest_sents = dec_input[:num_preds, 1:]
 
-    for date_in, date_out in zip(source_chars, dest_chars):
-        print('%20s => %s' % (''.join(date_in), ''.join(date_out)))
+    results = []
+    for src, dst in zip(source_sents, dest_sents):
+        src_chars = [num2charX[l] for l in src if num2charX[l] != "<PAD>"]
+        dst_chars = [num2charY[l] for l in dst]
+        src_text = ''.join(src_chars)
+        dst_text = ''.join(dst_chars)
+        results.append((src_text, dst_text))
+
+    return results
 
 
-def predict_eval():
-    source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
-    dec_input = predict(source_batch)
-    total, correct = evaluate(source_batch, target_batch, dec_input)
-    demonstrate(source_batch, dec_input, num_preds=10)
+def predict_eval(num_preds=0):
+    start_time = time.time()
+    total, correct = 0, 0
+    results = []
+    for source_batch, target_batch in batch_data(X_test, y_test, batch_size):
+        dec_input = predict(source_batch)
+        tot, corr = evaluate(source_batch, target_batch, dec_input)
+        total += tot
+        correct += corr
+        r = demonstrate(source_batch, dec_input, max(0, num_preds - len(results)))
+        if r:
+            results.extend(r)
+            results = results[:num_preds]
+    acc = correct / total
+    return acc, results, time.time() - start_time
 
-# Translate on test set
-# source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
-# dec_input = predict(source_batch)
-# evaluate(source_batch, target_batch, dec_input)
-# demonstrate(source_batch, dec_input, num_preds=10)
 
-predict_eval()
+# Train the graph
+show_graph(tf.get_default_graph().as_graph_def())
+
+
+X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
+
+sess.run(tf.global_variables_initializer())
+
+print('@' * 80)
+best_epoch = -1
+best_accuracy = 0.0
+
+for epoch_i in range(epochs):
+    total_loss = 0.0
+    total_accuracy = 0.0
+    start_time = time.time()
+    for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_train, y_train, batch_size)):
+        _, batch_loss, batch_logits = sess.run([optimizer, loss, logits],
+            feed_dict={inputs: source_batch,
+                       outputs: target_batch[:, :-1],
+                       targets: target_batch[:, 1:]})
+        accuracy = np.mean(batch_logits.argmax(axis=-1) == target_batch[:, 1:])
+        total_loss += batch_loss
+        total_accuracy += accuracy
+
+    train_loss = total_loss / (batch_i + 1)
+    train_accuracy = total_accuracy / (batch_i + 1)
+    train_duration = time.time() - start_time
+    test_accuracy, results, test_duration = predict_eval(5)
+
+    improved = test_accuracy > best_accuracy
+    if improved:
+        best_epoch = epoch_i
+        best_accuracy = test_accuracy
+    print('Epoch %3d (best %3d) Loss: %6.3f Accuracy: %6.4f Test Accuracy %6.4f '
+          'Epoch duration: %6.3f sec %6.3f sec (%d batches)' %
+          (epoch_i, best_epoch, train_loss, train_accuracy, test_accuracy,
+           test_duration, train_duration, batch_i + 1))
+    if improved:
+        for i, (src, dst) in enumerate(results):
+            print('%6d: %20s => %s' % (i, src, dst))
+    if epoch_i > best_epoch + patience:
+        break
