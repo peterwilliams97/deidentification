@@ -32,6 +32,14 @@ from utilities import show_graph
 from sklearn.model_selection import train_test_split
 
 
+test_size = 0.3
+epochs = 200
+batch_size = 128
+hidden_size = 32
+embed_size = 3
+patience = 5
+
+
 def describe(x):
     try:
         v = '%s:%s' % (list(x.shape), x.dtype)
@@ -77,10 +85,10 @@ LOCALES = babel.localedata.locale_identifiers()
 LOCALES = [lang for lang in LOCALES if 'en' in str(lang)]
 
 
-def create_date():
+def create_dates():
     """
         Creates some fake dates
-        :returns: tuple containing
+        returns: tuple containing
                   1. human formatted string
                   2. machine formatted string
                   3. date object.
@@ -107,7 +115,7 @@ def create_date():
     return human, machine
 
 
-data = [create_date() for _ in range(50000)]
+data = [create_dates() for _ in range(50000)]
 
 
 # See below what we are trying to do in this lesson. We are taking dates of various formats and
@@ -115,34 +123,32 @@ data = [create_date() for _ in range(50000)]
 
 print('data=%s' % data[:5])
 
-x = [x for x, y in data]
-y = [y for x, y in data]
+x, y = zip(*data)
 
-u_characters = set(' '.join(x))
-char2numX = dict(zip(u_characters, range(len(u_characters))))
+char2numX = {c: i for i, c in enumerate(sorted(set().union(*x)))}
+char2numY = {c: i for i, c in enumerate(sorted(set().union(*y)))}
 
-u_characters = set(' '.join(y))
-char2numY = dict(zip(u_characters, range(len(u_characters))))
-
-print(x[:3])
-print(y[:3])
-print(sorted(char2numX.items())[:3])
-print(sorted(char2numY.items())[:3])
+print('x:', x[:3])
+for i, (c, n) in enumerate(sorted(char2numX.items())[:5]):
+    print('%5d: %3d %s' % (i, n, c))
+print('y:', y[:3])
+for i, (c, n) in enumerate(sorted(char2numY.items())[:5]):
+    print('%5d: %3d %s' % (i, n, c))
 
 # Pad all sequences that are shorter than the max length of the sequence
 char2numX['<PAD>'] = len(char2numX)
-num2charX = dict(zip(char2numX.values(), char2numX.keys()))
+num2charX = {i: c for c, i in char2numX.items()}
 max_len = max([len(date) for date in x])
 
-x = [[char2numX['<PAD>']] * (max_len - len(date)) + [char2numX[x_] for x_ in date] for date in x]
+x = [[char2numX['<PAD>']] * (max_len - len(date)) + [char2numX[c] for c in date] for date in x]
 print(''.join([num2charX[x_] for x_ in x[4]]))
 x = np.array(x)
 
 char2numY['<GO>'] = len(char2numY)
-num2charY = dict(zip(char2numY.values(), char2numY.keys()))
+num2charY = {i: c for c, i in char2numY.items()}
 
-y = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y]
-print(''.join([num2charY[y_] for y_ in y[4]]))
+y = [[char2numY['<GO>']] + [char2numY[c] for c in date] for date in y]
+print(''.join([num2charY[c] for c in y[4]]))
 y = np.array(y)
 
 x_seq_length = len(x[0])
@@ -163,22 +169,19 @@ def batch_data(x, y, batch_size):
         yield x[start:start + batch_size], y[start:start + batch_size]
 
 
-epochs = 200
-batch_size = 128
-nodes = 32
-embed_size = 10
-patience = 5
-
 print('=' * 80)
 print('epochs=%d' % epochs)
 print('embed_size=%d' % embed_size)
 print('batch_size=%d' % batch_size)
-print('nodes=%d' % nodes)
+print('hidden_size=%d' % hidden_size)
 print('x_seq_length=%d' % x_seq_length)
 print('y_seq_length=%d' % y_seq_length)
 print('len(char2numX=%d' % len(char2numX))
 print('len(char2numY=%d' % len(char2numY))
 
+#
+# Build the computation graph
+#
 tf.reset_default_graph()
 sess = tf.InteractiveSession()
 
@@ -190,34 +193,30 @@ targets = tf.placeholder(tf.int32, (None, None), 'targets')
 # Embedding layers
 input_embedding = tf.Variable(tf.random_uniform((len(char2numX), embed_size), -1.0, 1.0),
                               name='enc_embedding')
-show('input_embedding', input_embedding)
-# TODO: create the variable output embedding
 output_embedding = tf.Variable(tf.random_uniform((len(char2numY), embed_size), -1.0, 1.0),
                                name='dec_embedding')
-show('output_embedding', output_embedding)
-
-# TODO: Use tf.nn.embedding_lookup to complete the next two lines
 date_input_embed = tf.nn.embedding_lookup(input_embedding, inputs)
 date_output_embed = tf.nn.embedding_lookup(output_embedding, outputs)
+
+show('input_embedding', input_embedding)
+show('output_embedding', output_embedding)
 show('date_input_embed', date_input_embed)
 show('date_output_embed', date_output_embed)
 
 with tf.variable_scope("encoding") as encoding_scope:
-    lstm_enc = tf.contrib.rnn.BasicLSTMCell(nodes)
+    lstm_enc = tf.contrib.rnn.BasicLSTMCell(hidden_size)
     _, last_state = tf.nn.dynamic_rnn(lstm_enc, inputs=date_input_embed, dtype=tf.float32)
 
 with tf.variable_scope("decoding") as decoding_scope:
-    # TODO: create the decoder LSTMs, this is very similar to the above
-    # you will need to set initial_state=last_state from the encoder
-    lstm_dec = tf.contrib.rnn.BasicLSTMCell(nodes)
+    # decoder initial_state=last_state from the encoder. !@#$ Is this "weight-sharing"?
+    lstm_dec = tf.contrib.rnn.BasicLSTMCell(hidden_size)
     dec_outputs, _ = tf.nn.dynamic_rnn(lstm_dec, inputs=date_output_embed,
                                        initial_state=last_state)
 
+# logits of decoder output
 logits = tf.contrib.layers.fully_connected(dec_outputs, num_outputs=len(char2numY),
                                            activation_fn=None)
 with tf.name_scope("optimization"):
-    # Loss function logits and labels must have the same first dimension,
-    # got logits shape [3712,13] and labels shape [1280]
     show('logits', logits)
     show('targets', targets)
     loss = tf.contrib.seq2seq.sequence_loss(logits, targets, tf.ones([batch_size, y_seq_length]))
@@ -289,7 +288,7 @@ def predict_eval(num_preds=0):
 show_graph(tf.get_default_graph().as_graph_def())
 
 
-X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=test_size, random_state=42)
 
 sess.run(tf.global_variables_initializer())
 
@@ -322,7 +321,7 @@ for epoch_i in range(epochs):
     print('Epoch %3d (best %3d) Loss: %6.3f Accuracy: %6.4f Test Accuracy %6.4f '
           'Epoch duration: %6.3f sec %6.3f sec (%d batches)' %
           (epoch_i, best_epoch, train_loss, train_accuracy, test_accuracy,
-           test_duration, train_duration, batch_i + 1))
+           train_duration, test_duration, batch_i + 1))
     if improved:
         for i, (src, dst) in enumerate(results):
             print('%6d: %20s => %s' % (i, src, dst))
