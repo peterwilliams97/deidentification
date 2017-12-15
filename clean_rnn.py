@@ -21,7 +21,7 @@ embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
 MAX_VOCAB = 40000
 MAX_WORDS = 10000
-SMALL_TEXT = True
+SMALL_TEXT = False
 HOLMES = True
 if SMALL_TEXT:
     HOLMES = False
@@ -83,6 +83,7 @@ def describe(x):
 
 
 def show(name, x):
+    return
     if isinstance(x, (list, tuple)):
         v = '%d:%s' % (len(x), describe(x))
     else:
@@ -370,9 +371,9 @@ cost = tf.reduce_mean(loss)
 optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 
 # Model evaluation !@#$ For embeddings?
-show("tf.argmax(logits, 1)", tf.argmax(logits, 1))
+show("tf.argmax(logits, 2)", tf.argmax(logits, 2))
 
-correct_pred = tf.equal(tf.argmax(logits, 1), y)
+correct_pred = tf.equal(tf.argmax(logits, 2), y)
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
@@ -391,7 +392,9 @@ def demonstrate(indexes_x, indexes_y, logits, step, i):
     show('indexes_y', indexes_y)
     show('logits', logits)
     show('v', v)
-    symbols_out_pred = index_word[int(v[i, 0])]
+    symbols_out_pred = index_word.get(int(v[i, 0]), UNKNOWN)
+    # print('symbols_out=%s' % symbols_out)
+    # print('symbols_out_pred=%s' % symbols_out_pred)
     mark = '****' if symbols_out_pred == symbols_out else ''
     return "%5d: %60s -> [%s] -- [%s] %s" % (step, symbols_in, symbols_out, symbols_out_pred, mark)
 
