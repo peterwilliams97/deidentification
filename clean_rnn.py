@@ -19,20 +19,18 @@ embedding_size = 100
 embeddings_freeze = True
 embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
-MAX_VOCAB = 40000
-MAX_WORDS = 10000
+MAX_VOCAB = 5000
+MAX_WORDS = 80000
 SMALL_TEXT = False
 HOLMES = True
 if SMALL_TEXT:
     HOLMES = False
 learning_rate = 0.001
-num_steps = 3
+n_steps = 3
 batch_size = 100
 
 if True:
     num_layers = 2
-    # num_steps = 20
-    hidden_size = 200
     max_epoch = 4
     max_max_epoch = 13
     keep_prob = 1.0
@@ -48,7 +46,7 @@ patience = 100
 model_folder = 'models'
 
 # number of units in RNN cell
-hidden_size = 512
+hidden_size = 256
 
 UNKNOWN = '<UNKNOWN>'
 
@@ -117,7 +115,7 @@ spacy_nlp = spacy.load('en')
 punct = {',', '.', ';', ':', '\n', '\t', '\f', ''}
 
 
-def tokenize(text, num_steps, max_words):
+def tokenize(text, n_steps, max_words):
     document = spacy_nlp(text)
     doc_sents = list(document.sents)
     print(len(doc_sents))
@@ -126,7 +124,7 @@ def tokenize(text, num_steps, max_words):
     for span in document.sents:
         sent = [token.text.strip() for token in span]
         sent = [w for w in sent if w not in punct]
-        if len(sent) < num_steps + 1:
+        if len(sent) < n_steps + 1:
             continue
         sentences.append(sent)
         n_words += len(sent)
@@ -139,20 +137,20 @@ def tokenize(text, num_steps, max_words):
     return sentences
 
 
-def train_test(sentences, num_steps, test_frac):
+def train_test(sentences, n_steps, test_frac):
     """Spilt sentences list into training and test lists.
         training will have test_frac of the words in sentences
     """
     random.shuffle(sentences)
-    n_samples = sum((len(sent) - num_steps) for sent in sentences)
+    n_samples = sum((len(sent) - n_steps) for sent in sentences)
     n_test = int(n_samples * test_frac)
     test = []
     i_test = 0
     for sent in sentences:
-        if i_test + len(sent) - num_steps > n_test:
+        if i_test + len(sent) - n_steps > n_test:
             break
         test.append(sent)
-        i_test += len(sent) - num_steps
+        i_test += len(sent) - n_steps
     train = sentences[len(test):]
     assert train and test, (len(sentences), len(test), len(train), test_frac)
     return train, test
@@ -218,7 +216,7 @@ def build_embeddings(word_index, embeddings_path):
 #
 text = make_text()
 print('%7d bytes' % len(text))
-sentences = tokenize(text, num_steps, MAX_WORDS)
+sentences = tokenize(text, n_steps, MAX_WORDS)
 print('ALL')
 print('%7d sentences' % len(sentences))
 print('%7d words' % sum(len(sent) for sent in sentences))
@@ -226,7 +224,7 @@ print('%7d words' % sum(len(sent) for sent in sentences))
 if INDEX_ALL_WORDS:
     word_counts, word_index, index_word, unk_index = build_indexes(sentences, MAX_VOCAB)
 
-train, test_sentences = train_test(sentences, num_steps, test_frac)
+train, test_sentences = train_test(sentences, n_steps, test_frac)
 sentences = train
 
 print('TRAIN')
@@ -238,50 +236,49 @@ if not INDEX_ALL_WORDS:
 
 vocabulary_size = len(word_index)
 print('%7d vocab' % vocabulary_size)
-vector_size = embedding_size
-print('%7d vector_size' % vector_size)
+print('%7d embedding_size' % embedding_size)
 
 # not used !@#$
 embeddings, unk_embedding = build_embeddings(word_index, embeddings_path)
-n_samples = sum((len(sent) - num_steps) for sent in sentences)
+n_samples = sum((len(sent) - n_steps) for sent in sentences)
 print('%7d samples' % n_samples)
 
 print('hidden_size=%d' % hidden_size)
 print('vocabulary_size=%d' % vocabulary_size)
-print('num_steps=%d' % num_steps)
+print('n_steps=%d' % n_steps)
 print('batch_size=%d' % batch_size)
 
 
-def batch_getter(sentences, num_steps, batch_size):
+def batch_getter(sentences, n_steps, batch_size):
     """Generator that returns x, y, oneh_y in `batch_size` batches
-        phrase is a random phrase of length num_steps + 1 from words
-        x = indexes of first num_steps words
+        phrase is a random phrase of length n_steps + 1 from words
+        x = indexes of first n_steps words
         y = index of last word
         returns x, y
     """
     sequence_numbers = []
     for i, sent in enumerate(sentences):
-        for j in range(len(sent) - num_steps - 1):
+        for j in range(len(sent) - n_steps - 1):
             sequence_numbers.append((i, j))
     random.shuffle(sequence_numbers)
 
     for k0 in range(0, len(sequence_numbers), batch_size):
         n = min(len(sequence_numbers) - k0, batch_size)
         # print('****', k, n, len(sequence_numbers))
-        indexes_x = np.empty((n, num_steps), dtype=int)
-        indexes_y = np.empty((n, 1), dtype=int)
+        indexes_x = np.empty((n, n_steps), dtype=int)
+        indexes_y = np.empty(n, dtype=int)
 
         for k in range(n):
             i, j = sequence_numbers[k0 + k]
             words = sentences[i]
-            assert j < len(words) - num_steps - 1, (i, j, len(words), num_steps)
-            assert j + num_steps < len(words), 'i=%d j=%d words=%d sequence_numbers num_steps=%d' % (
-                i, j, len(words), len(sequence_numbers), num_steps)
+            assert j < len(words) - n_steps - 1, (i, j, len(words), n_steps)
+            assert j + n_steps < len(words), 'i=%d j=%d words=%d sequence_numbers n_steps=%d' % (
+                i, j, len(words), len(sequence_numbers), n_steps)
 
-            phrase_x = words[j:j + num_steps]
-            phrase_y = words[j + num_steps]
+            phrase_x = words[j:j + n_steps]
+            phrase_y = words[j + n_steps]
             wx = [word_index.get(w, unk_index) for w in phrase_x]
-            wy = [word_index.get(phrase_y, unk_index)]
+            wy = word_index.get(phrase_y, unk_index)
 
             indexes_x[k] = np.array(wx)
             indexes_y[k] = np.array(wy)
@@ -293,10 +290,18 @@ def batch_getter(sentences, num_steps, batch_size):
 initializer = tf.contrib.layers.xavier_initializer()
 
 # tf Graph inputs
-# x = indexes of first num_steps words in phrase
+# X = indexes of first `n_steps` words in phrase
 # y = index of last word in phrase
-x = tf.placeholder(tf.float32, [None, num_steps], name="x")
-y = tf.placeholder(tf.int64, [None, 1], name="y")
+X = tf.placeholder(tf.float32, [None, n_steps], name="X")
+y = tf.placeholder(tf.int64, [None], name="y")
+X1 = tf.expand_dims(X, -1, name='X1')
+y1 = tf.expand_dims(y, -1, name='y1')
+
+show('X', X)
+show('X1', X1)
+show('y', y)
+show('y1', y1)
+
 
 # RNN output node weights and biases
 weights = tf.Variable(tf.random_normal([hidden_size, vocabulary_size]))
@@ -326,22 +331,17 @@ def RNN(x, weights, biases):
     """
     show('x in', x)
 
-    # Generate a num_steps-element sequence of inputs
-    # (eg. [had] [a] [general] -> [20] [6] [33])
-    x = tf.split(x, num_steps, 1)
-    show('x split', x)
-    show('x[0]', x[0])
-
     # 1-layer LSTM with hidden_size units.
     rnn_cell = rnn.BasicLSTMCell(hidden_size)
 
     # generate prediction
-    outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
+    outputs, states = tf.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
+    outputs0 = outputs[:, -1, :]
 
-    # there are num_steps outputs but we only want the last output
-    logits = tf.nn.xw_plus_b(outputs[-1], weights, biases)
+    # there are n_steps outputs but we only want the last output
+    logits = tf.nn.xw_plus_b(outputs0, weights, biases)
     show('outputs', outputs)
-    show('outputs[-1]', outputs[-1])
+    show('outputs[-1]', outputs0)
     show('weights', weights)
     show('biases', biases)
     show('logits', logits)
@@ -350,12 +350,16 @@ def RNN(x, weights, biases):
     return logits
 
 
-logits = RNN(x, weights, biases)
+logits = RNN(X1, weights, biases)
 logits_shape = tf.shape(logits, name="logits_shape")
+y_shape = tf.shape(y1, name="y_shape")
 
 show("logits", logits)
 show("logits_shape", logits_shape)
 show("y", y)
+show("y1", y1)
+show("y_shape", y_shape)
+
 print('batch_size=%d' % batch_size)
 
 # Loss and optimizer
@@ -363,7 +367,7 @@ print('batch_size=%d' % batch_size)
 # Use the contrib sequence loss and average over the batches
 loss = tf.contrib.seq2seq.sequence_loss(
         logits,
-        y,
+        y1,
         tf.ones([logits_shape[0], 1], dtype=tf.float32),
         average_across_timesteps=False,  # There is only one output timestep
         average_across_batch=True)
@@ -373,7 +377,7 @@ optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost
 # Model evaluation !@#$ For embeddings?
 show("tf.argmax(logits, 2)", tf.argmax(logits, 2))
 
-correct_pred = tf.equal(tf.argmax(logits, 2), y)
+correct_pred = tf.equal(tf.argmax(logits, 2), y1)
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
@@ -386,7 +390,7 @@ saver = tf.train.Saver(max_to_keep=3)
 def demonstrate(indexes_x, indexes_y, logits, step, i):
     indexes = [int(indexes_x[i, j]) for j in range(indexes_x.shape[1])]
     symbols_in = [index_word.get(j, UNKNOWN) for j in indexes]
-    symbols_out = index_word.get(int(indexes_y[i, 0]), UNKNOWN)
+    symbols_out = index_word.get(int(indexes_y[i]), UNKNOWN)
     v = tf.argmax(logits, 2).eval()
     show('indexes_x', indexes_x)
     show('indexes_y', indexes_y)
@@ -400,11 +404,11 @@ def demonstrate(indexes_x, indexes_y, logits, step, i):
 
 
 def make_prediction(session, x):
-    return tf.run([y], feed_dict={x: x})
+    return tf.run([y], feed_dict={X: x})
 
 
 def test_model(session, x):
-    return tf.run([accuracy], feed_dict={x: x})
+    return tf.run([accuracy], feed_dict={X: x})
 
 
 def test_results(session):
@@ -414,7 +418,7 @@ def test_results(session):
     loss_total = 0.0
     predictions = []
 
-    source = batch_getter(test_sentences, num_steps, batch_size)
+    source = batch_getter(test_sentences, n_steps, batch_size)
 
     step = 0
     # Process minibatches of size `batch_size`
@@ -424,7 +428,7 @@ def test_results(session):
 
         # Update the model
         acc, loss, y_pred = session.run([accuracy, cost, logits],
-                                feed_dict={x: indexes_x,
+                                feed_dict={X: indexes_x,
                                            y: indexes_y})
         loss_total += loss * frac
         acc_total += acc * frac
@@ -466,21 +470,21 @@ with tf.Session() as session:
         accuracies = []
         train_acc = 0.0
         train_loss = 0.0
-        source = batch_getter(sentences, num_steps, batch_size)
+        source = batch_getter(sentences, n_steps, batch_size)
 
         # Process minibatches of size `batch_size`
         for step, (indexes_x, indexes_y) in enumerate(source):
             # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
             frac = len(indexes_y) / n_samples
 
-            show('x', x)
+            show('X', X)
             show('y', y)
             show('indexes_x', indexes_x)
             show('indexes_y', indexes_y)
 
             # Update the model
             _, acc, loss, y_pred = session.run([optimizer, accuracy, cost, logits],
-                                               feed_dict={x: indexes_x,
+                                               feed_dict={X: indexes_x,
                                                           y: indexes_y})
             train_loss += loss * frac
             train_acc += acc * frac
@@ -527,16 +531,16 @@ with tf.Session() as session:
     print("\ttensorboard --logdir=%s" % (logs_path))
     print("Point your web browser to: http://localhost:6006/")
     # while True:
-    #     prompt = "%s words: " % num_steps
+    #     prompt = "%s words: " % n_steps
     #     sentence = input(prompt)
     #     sentence = sentence.strip()
     #     words = sentence.split(' ')
-    #     if len(words) != num_steps:
+    #     if len(words) != n_steps:
     #         continue
     #     try:
     #         indexes = [word_index.get(w, unk_index) for w in words]
     #         for i in range(32):
-    #             keys = np.reshape(np.array(indexes), [-1, num_steps])
+    #             keys = np.reshape(np.array(indexes), [-1, n_steps])
     #             y_pred = session.run(pred, feed_dict={x: keys})
     #             indexes_pred = int(tf.argmax(y_pred, 1).eval())
     #             sentence = "%s %s" % (sentence, index_word[indexes_pred])
