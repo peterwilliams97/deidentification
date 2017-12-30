@@ -38,8 +38,8 @@ from sklearn.model_selection import train_test_split
 test_size = 0.3
 epochs = 200
 batch_size = 128
-hidden_size = 64  # Number of dimensions of cell 32 works well
-embed_size = 15   # Character embedding size     3-10 works well
+hidden_size = 4  # Number of dimensions of cell 32 works well
+embed_size = 20   # Character embedding size     3-10 works well
 patience = 5      # Number of epochs in which test accuracy doesn't increase after which we give up
 
 
@@ -190,9 +190,9 @@ sess = tf.Session()
 
 # Tensor where we will feed the data into graph
 # Can't specify outputs size (y_seq_length) because we build it from partial strings in predict()
-inputs = tf.placeholder(tf.int32, (None, x_seq_length), 'inputs')
-outputs = tf.placeholder(tf.int32, (None, None), 'output')
-targets = tf.placeholder(tf.int32, (None, y_seq_length), 'targets')
+inputs = tf.placeholder(tf.int32, (batch_size, x_seq_length), 'inputs')
+outputs = tf.placeholder(tf.int32, (batch_size, None), 'output')
+targets = tf.placeholder(tf.int32, (batch_size, y_seq_length), 'targets')
 
 # Embedding layers
 input_embedding = tf.Variable(tf.random_uniform((len(char2numX), embed_size), -1.0, 1.0),

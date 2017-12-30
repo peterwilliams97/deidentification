@@ -35,7 +35,7 @@ patience = 100
 model_folder = 'models'
 
 # number of units in RNN cell
-n_hidden = 512
+hidden_size = 512
 
 UNKNOWN = '<UNKNOWN>'
 
@@ -352,15 +352,16 @@ def batch_getter(sentences, n_input, batch_size):
 
 initializer = tf.contrib.layers.xavier_initializer()
 
-# tf Graph inputs
-# x = indexes of first n_input words in phrase
-# y = one hot encoding of last word in phrase
-x = tf.placeholder("float", [None, n_input])
-y = tf.placeholder("float", [None, vocabulary_size])
+with tf.name_scope("input"):
+    # tf Graph inputs
+    # x = indexes of first n_input words in phrase
+    # y = one hot encoding of last word in phrase
+    x = tf.placeholder("float", [None, n_input])
+    y = tf.placeholder("float", [None, vocabulary_size])
 
-# RNN output node weights and biases  !@#$ n_hidden -> hidden_size
-weights = tf.Variable(tf.random_normal([n_hidden, vocabulary_size]))
-biases = tf.Variable(tf.random_normal([vocabulary_size]))
+    # RNN output node weights and biases  !@#$ hidden_size -> hidden_size
+    weights = tf.Variable(tf.random_normal([hidden_size, vocabulary_size]))
+    biases = tf.Variable(tf.random_normal([vocabulary_size]))
 
 # # # https://www.tensorflow.org/programmers_guide/embedding
 # word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
@@ -391,8 +392,8 @@ def RNN(x, weights, biases):
     x = tf.split(x, n_input, 1)
     show('x split', x)
 
-    # 1-layer LSTM with n_hidden units.
-    rnn_cell = rnn.BasicLSTMCell(n_hidden)
+    # 1-layer LSTM with hidden_size units.
+    rnn_cell = rnn.BasicLSTMCell(hidden_size)
 
     # generate prediction
     outputs, states = rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
@@ -403,23 +404,25 @@ def RNN(x, weights, biases):
     return logits
 
 
-logits = RNN(x, weights, biases)
+with tf.name_scope("model"):
+    logits = RNN(x, weights, biases)
 
-# Loss and optimizer
-# loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
-# Use the contrib sequence loss and average over the batches
-loss = tf.contrib.seq2seq.sequence_loss(
-        logits,
-        y,
-        tf.ones([batch_size, self.num_steps], dtype=tf.float32),
-        average_across_timesteps=False,
-        average_across_batch=True)
-cost = tf.reduce_mean(loss)
-optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
+with tf.name_scope("loss"):
+    # Loss and optimizer
+    # loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
+    # Use the contrib sequence loss and average over the batches
+    loss = tf.contrib.seq2seq.sequence_loss(
+            logits,
+            y,
+            tf.ones([batch_size, self.num_steps], dtype=tf.float32),
+            average_across_timesteps=False,
+            average_across_batch=True)
+    cost = tf.reduce_mean(loss)
+    optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 
-# Model evaluation !@#$ For embeddings?
-correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
-accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    # Model evaluation !@#$ For embeddings?
+    correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Initializing the variables
 init = tf.global_variables_initializer()

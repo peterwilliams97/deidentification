@@ -16,12 +16,10 @@ seed = 112
 use_spacy = True
 use_glove_embeddings = True
 embedding_size = 100
-embeddings_freeze = True
-embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
 MAX_VOCAB = 5000
 MAX_WORDS = 80000
-SMALL_TEXT = False
+SMALL_TEXT = True
 HOLMES = True
 if SMALL_TEXT:
     HOLMES = False
@@ -175,36 +173,6 @@ def build_indexes(sentences, max_vocab):
     return word_counts, word_index, index_word, unk_index
 
 
-def load_word_embeddings(path):
-    import codecs
-    count = -1
-    word_vector = {}
-    with codecs.open(path, 'r', 'UTF-8') as f:
-        for line in f:
-            count += 1
-            # if count > 1000:break
-            line = line.strip()
-            line = line.split(' ')
-            if not line:
-                continue
-            token = line[0]
-            vector = np.array([float(x) for x in line[1:]])
-            word_vector[token] = vector
-
-    sizes = {v.size for v in word_vector.values()}
-    assert len(sizes) == 1, (len(sizes), sorted(sizes)[:10])
-    return word_vector
-
-
-def build_embeddings(word_index, embeddings_path):
-    word_vector = load_word_embeddings(embeddings_path)
-    v = next(iter(word_vector.values()))
-    unk_embedding = np.zeros(v.shape, dtype=v.dtype)
-    embeddings = {w: word_vector.get(w, unk_embedding) for w in word_index}
-    del word_vector
-    return embeddings, unk_embedding
-
-
 #
 # Execution starts here
 #
@@ -329,20 +297,6 @@ with tf.name_scope("model"):
     # RNN output node weights and biases
     weights = tf.Variable(tf.random_normal([hidden_size, vocabulary_size]))
     biases = tf.Variable(tf.random_normal([vocabulary_size]))
-
-    # # # https://www.tensorflow.org/programmers_guide/embedding
-    # word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
-    # embedded_word_ids = tf.nn.embedding_lookup(word_embeddings, word_ids)
-
-    # # embeddings = tf.Variable(
-    # #         tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
-    # # #     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
-
-    # token_embedding_weights = tf.get_variable(
-    #                  "token_embedding_weights",
-    #                   shape=[vocabulary_size, embedding_size],
-    #                   initializer=initializer,
-    #                   trainable=not embeddings_freeze)
 
     logits = RNN(X1, weights, biases)
     logits_shape = tf.shape(logits, name="logits_shape")
@@ -507,7 +461,7 @@ with tf.Session() as session:
             run_number = 'run_number_%03d' % best_epoch
             saver.save(session, os.path.join(model_folder, run_number))
             summary = tf.summary.FileWriter(logdir=os.path.join(logs_path, run_number), graph=session.graph)
-            print('summary=%s' % summary)
+            print('summary=%s' % summary.path)
 
         done = epoch > best_epoch + patience or epoch == n_epochs - 1
         if (epoch + 1) % n_epochs_report == 0 or done:
