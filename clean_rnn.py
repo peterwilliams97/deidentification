@@ -359,14 +359,22 @@ with tf.name_scope("loss"):
     # Loss and optimizer
     # loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y)
     # Use the contrib sequence loss and average over the batches
-    loss = tf.contrib.seq2seq.sequence_loss(
-            logits,
-            y1,
-            tf.ones([logits_shape[0], 1], dtype=tf.float32),
-            average_across_timesteps=False,  # There is only one output timestep
-            average_across_batch=True)
+    # loss0 = tf.contrib.seq2seq.sequence_loss(
+    #         logits,
+    #         y1,
+    #         tf.ones([logits_shape[0], 1], dtype=tf.float32),
+    #         average_across_timesteps=False,  # There is only one output timestep
+    #         average_across_batch=True)
+    # cost0 = tf.reduce_mean(loss0)
+    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=y1, name="xentropy")
     cost = tf.reduce_mean(loss)
     optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
+
+    # show("loss0", loss0)
+    show("loss", loss)
+    # show("cost0", cost0)
+    show("cost", cost)
+    # assert False
 
     # Model evaluation !@#$ For embeddings?
     show("tf.argmax(logits, 2)", tf.argmax(logits, 2))
