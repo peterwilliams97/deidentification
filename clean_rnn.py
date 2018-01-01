@@ -19,25 +19,15 @@ embedding_size = 100
 embeddings_freeze = True
 embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
-MAX_VOCAB = 5000
+MAX_VOCAB = 50000
 MAX_WORDS = 80000
-SMALL_TEXT = False
+SMALL_TEXT = True
 HOLMES = True
 if SMALL_TEXT:
     HOLMES = False
 learning_rate = 0.001
 n_steps = 3
 batch_size = 100
-
-if True:
-    num_layers = 2
-    max_epoch = 4
-    max_max_epoch = 13
-    keep_prob = 1.0
-    lr_decay = 0.5
-    batch_size = 20
-    vocab_size = 10000
-
 test_frac = .2
 n_epochs = 1000
 n_epochs_report = 1
@@ -49,6 +39,8 @@ model_folder = 'models'
 hidden_size = 256
 UNKNOWN = '<UNKNOWN>'
 random.seed(seed)
+np.random.seed(seed)
+tf.set_random_seed(seed)
 
 start_time = time.time()
 
@@ -297,6 +289,8 @@ def RNN(x, weights, biases):
     outputs, states = tf.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
     outputs0 = outputs[:, -1, :]
 
+    tf.summary.histogram('sum_outputs', outputs)
+
     # there are n_steps outputs but we only want the last output
     logits = tf.nn.xw_plus_b(outputs0, weights, biases)
     show('outputs', outputs)
@@ -327,8 +321,8 @@ show('y1', y1)
 
 with tf.name_scope("model"):
     # RNN output node weights and biases
-    weights = tf.Variable(tf.random_normal([hidden_size, vocabulary_size]))
-    biases = tf.Variable(tf.random_normal([vocabulary_size]))
+    weights = tf.Variable(tf.random_normal([hidden_size, vocabulary_size]), name='weights')
+    biases = tf.Variable(tf.random_normal([vocabulary_size]), name='biases')
 
     # # # https://www.tensorflow.org/programmers_guide/embedding
     # word_embeddings = tf.get_variable("word_embeddings", [vocabulary_size, embedding_size])
@@ -348,6 +342,10 @@ with tf.name_scope("model"):
     logits_shape = tf.shape(logits, name="logits_shape")
     y_shape = tf.shape(y1, name="y_shape")
 
+    tf.summary.histogram('sum_biases', biases)
+    tf.summary.histogram('sum_weights', weights)
+    tf.summary.histogram('sum_logits', logits)
+
 show("logits", logits)
 show("logits_shape", logits_shape)
 show("y", y)
@@ -366,21 +364,29 @@ with tf.name_scope("loss"):
     #         average_across_timesteps=False,  # There is only one output timestep
     #         average_across_batch=True)
     # cost0 = tf.reduce_mean(loss0)
-    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=y1, name="xentropy")
-    cost = tf.reduce_mean(loss)
-    optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
+    xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=y1, name="xentropy")
+    cost = tf.reduce_mean(xentropy, name="cost")
+    optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost, name="optimizer")
 
     # show("loss0", loss0)
-    show("loss", loss)
+    show("loss", xentropy)
     # show("cost0", cost0)
     show("cost", cost)
     # assert False
 
-    # Model evaluation !@#$ For embeddings?
-    show("tf.argmax(logits, 2)", tf.argmax(logits, 2))
+    top = tf.argmax(logits, 2, name="top")
 
-    correct_pred = tf.equal(tf.argmax(logits, 2), y1)
-    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    # Model evaluation !@#$ For embeddings?
+    show("tf.argmax(logits, 2)", top)
+
+    correct_pred0 = tf.equal(top, y1, name="correct_pred0")
+    correct_pred = tf.cast(correct_pred0, tf.float32, name="correct_pred")
+    accuracy = tf.reduce_mean(correct_pred, name="accuracy")
+
+    tf.summary.histogram('sum_xentropy', xentropy)
+    tf.summary.scalar('sum_cost', cost)
+    tf.summary.histogram('sum_correct_pred', correct_pred)
+    tf.summary.scalar('sum_accuracy', accuracy)
 
 
 def demonstrate(indexes_x, indexes_y, logits, step, i):
@@ -443,7 +449,7 @@ def test_results(session):
 # Initializing the variables
 init = tf.global_variables_initializer()
 
-
+merged_summary = tf.summary.merge_all()
 # Target log path
 logs_path = './tf_rnn_words'
 train_writer = tf.summary.FileWriter(logs_path)
@@ -451,7 +457,6 @@ run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
 run_metadata = tf.RunMetadata()
 saver = tf.train.Saver(max_to_keep=1)
 os.makedirs(model_folder, exist_ok=True)
-# saver = tf.train.Saver(max_to_keep=3)
 
 # Launch the graph
 print('@@0')
@@ -495,7 +500,8 @@ with tf.Session() as session:
             _, acc, loss, y_pred = session.run([optimizer, accuracy, cost, logits],
                                                feed_dict={X: indexes_x,
                                                           y: indexes_y},
-                                               options=run_options)
+                                               options=run_options,
+                                               run_metadata=run_metadata)
             train_loss += loss * frac
             train_acc += acc * frac
             accuracies.append(acc)
@@ -514,8 +520,14 @@ with tf.Session() as session:
                 100.0 * train_acc, 100.0 * test_acc))
             run_number = 'run_number_%03d' % best_epoch
             saver.save(session, os.path.join(model_folder, run_number))
-            summary = tf.summary.FileWriter(logdir=os.path.join(logs_path, run_number), graph=session.graph)
-            print('summary=%s' % summary)
+            # summary = tf.summary.FileWriter(logdir=os.path.join(logs_path, run_number), graph=session.graph)
+            train_writer.add_run_metadata(run_metadata, run_number)
+
+        summary = session.run(merged_summary,
+                                           feed_dict={X: indexes_x,
+                                                      y: indexes_y})
+        train_writer.add_summary(summary, epoch)
+            # print('summary=%s' % summary)
 
         done = epoch > best_epoch + patience or epoch == n_epochs - 1
         if (epoch + 1) % n_epochs_report == 0 or done:
