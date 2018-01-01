@@ -374,12 +374,12 @@ with tf.name_scope("loss"):
     show("cost", cost)
     # assert False
 
-    top = tf.argmax(logits, 2, name="top")
+    top_index = tf.argmax(logits, 2, name="top_index")
 
     # Model evaluation !@#$ For embeddings?
-    show("tf.argmax(logits, 2)", top)
+    show("tf.argmax(logits, 2)", top_index)
 
-    correct_pred0 = tf.equal(top, y1, name="correct_pred0")
+    correct_pred0 = tf.equal(top_index, y1, name="correct_pred0")
     correct_pred = tf.cast(correct_pred0, tf.float32, name="correct_pred")
     accuracy = tf.reduce_mean(correct_pred, name="accuracy")
 
@@ -389,16 +389,25 @@ with tf.name_scope("loss"):
     tf.summary.scalar('sum_accuracy', accuracy)
 
 
-def demonstrate(indexes_x, indexes_y, logits, step, i):
+def demonstrate(indexes_x, indexes_y, top_index, step, i):
+    size0 = session.graph_def.ByteSize()
     indexes = [int(indexes_x[i, j]) for j in range(indexes_x.shape[1])]
+    size = session.graph_def.ByteSize()
+    assert size == size0, (size - size0)
     symbols_in = [index_word.get(j, UNKNOWN) for j in indexes]
     symbols_out = index_word.get(int(indexes_y[i]), UNKNOWN)
-    v = tf.argmax(logits, 2).eval()
+    size = session.graph_def.ByteSize()
+    assert size == size0, (size - size0)
+    v = top_index
+    size = session.graph_def.ByteSize()
+    assert size == size0, (size - size0)
     show('indexes_x', indexes_x)
     show('indexes_y', indexes_y)
     show('logits', logits)
     show('v', v)
     symbols_out_pred = index_word.get(int(v[i, 0]), UNKNOWN)
+    size = session.graph_def.ByteSize()
+    assert size == size0, (size - size0)
     # print('symbols_out=%s' % symbols_out)
     # print('symbols_out_pred=%s' % symbols_out_pred)
     mark = '****' if symbols_out_pred == symbols_out else ''
@@ -420,27 +429,39 @@ def test_results(session):
     loss_total = 0.0
     predictions = []
 
+    size0 = session.graph_def.ByteSize()
+
     source = batch_getter(test_sentences, n_steps, batch_size)
 
     step = 0
     # Process minibatches of size `batch_size`
     for _, (indexes_x, indexes_y) in enumerate(source):
         # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
+        size = session.graph_def.ByteSize()
+        assert size == size0, (size - size0)
         frac = len(indexes_y) / n_samples
 
         # Update the model
-        acc, loss, y_pred = session.run([accuracy, cost, logits],
+        acc, loss, y_pred = session.run([accuracy, cost, top_index],
                                 feed_dict={X: indexes_x,
                                            y: indexes_y})
+        size = session.graph_def.ByteSize()
+        assert size == size0, (size - size0)
+
         loss_total += loss * frac
         acc_total += acc * frac
         assert acc <= 1.0, (acc, loss, frac)
         assert frac <= 1.0, (acc, loss, frac)
         assert acc_total <= 1.0, (acc, loss)
 
+        size = session.graph_def.ByteSize()
+        assert size == size0, (size - size0)
+
         for i in range(len(indexes_y)):
             if step < 10:
                 predictions.append(demonstrate(indexes_x, indexes_y, y_pred, step, i))
+                size = session.graph_def.ByteSize()
+                assert size == size0, (size - size0, i, step)
             step += 1
 
     return loss_total, acc_total, predictions
@@ -486,7 +507,7 @@ with tf.Session() as session:
         train_loss = 0.0
         source = batch_getter(sentences, n_steps, batch_size)
 
-        print('size 0: %d' % session.graph_def.ByteSize())
+        size0 = session.graph_def.ByteSize()
 
         # Process minibatches of size `batch_size`
         for step, (indexes_x, indexes_y) in enumerate(source):
@@ -504,6 +525,10 @@ with tf.Session() as session:
                                                           y: indexes_y},
                                                options=run_options,
                                                run_metadata=run_metadata)
+            size1 = session.graph_def.ByteSize()
+            if size1 != size0:
+                print('size 0a: %d step=%d' % (size1, step))
+                size0 = size1
             train_loss += loss * frac
             train_acc += acc * frac
             accuracies.append(acc)
@@ -525,17 +550,13 @@ with tf.Session() as session:
             # summary = tf.summary.FileWriter(logdir=os.path.join(logs_path, run_number), graph=session.graph)
             # train_writer.add_run_metadata(run_metadata, run_number)
 
-        print('size 1: %d' % session.graph_def.ByteSize())
         summary = session.run(merged_summary,
                               feed_dict={X: indexes_x,
                                          y: indexes_y},
                               options=run_options,
                               run_metadata=run_metadata)
-        print('size 2: %d' % session.graph_def.ByteSize())
         train_writer.add_run_metadata(run_metadata, 'step%03d' % epoch)
-        print('size 3: %d' % session.graph_def.ByteSize())
         train_writer.add_summary(summary, epoch)
-        print('size 4: %d' % session.graph_def.ByteSize())
         # print('summary=%s' % summary)
 
         done = epoch > best_epoch + patience or epoch == n_epochs - 1
