@@ -21,7 +21,7 @@ embeddings_path = expanduser('~/data/glove.6B/glove.6B.100d.txt')
 INDEX_ALL_WORDS = True
 MAX_VOCAB = 50000
 MAX_WORDS = 80000
-SMALL_TEXT = True
+SMALL_TEXT = False
 HOLMES = True
 if SMALL_TEXT:
     HOLMES = False
@@ -36,7 +36,7 @@ patience = 100
 model_folder = 'models'
 
 # number of units in RNN cell
-hidden_size = 256
+hidden_size = 512
 UNKNOWN = '<UNKNOWN>'
 random.seed(seed)
 np.random.seed(seed)
@@ -486,6 +486,8 @@ with tf.Session() as session:
         train_loss = 0.0
         source = batch_getter(sentences, n_steps, batch_size)
 
+        print('size 0: %d' % session.graph_def.ByteSize())
+
         # Process minibatches of size `batch_size`
         for step, (indexes_x, indexes_y) in enumerate(source):
             # print('*** %s %d %d' % (list(indexes_y.shape), n_samples, batch_size))
@@ -521,13 +523,20 @@ with tf.Session() as session:
             run_number = 'run_number_%03d' % best_epoch
             saver.save(session, os.path.join(model_folder, run_number))
             # summary = tf.summary.FileWriter(logdir=os.path.join(logs_path, run_number), graph=session.graph)
-            train_writer.add_run_metadata(run_metadata, run_number)
+            # train_writer.add_run_metadata(run_metadata, run_number)
 
+        print('size 1: %d' % session.graph_def.ByteSize())
         summary = session.run(merged_summary,
-                                           feed_dict={X: indexes_x,
-                                                      y: indexes_y})
+                              feed_dict={X: indexes_x,
+                                         y: indexes_y},
+                              options=run_options,
+                              run_metadata=run_metadata)
+        print('size 2: %d' % session.graph_def.ByteSize())
+        train_writer.add_run_metadata(run_metadata, 'step%03d' % epoch)
+        print('size 3: %d' % session.graph_def.ByteSize())
         train_writer.add_summary(summary, epoch)
-            # print('summary=%s' % summary)
+        print('size 4: %d' % session.graph_def.ByteSize())
+        # print('summary=%s' % summary)
 
         done = epoch > best_epoch + patience or epoch == n_epochs - 1
         if (epoch + 1) % n_epochs_report == 0 or done:
